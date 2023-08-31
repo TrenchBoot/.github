@@ -1,0 +1,94 @@
+name: Test build and package QubesOS RPMs
+
+on:
+  workflow_call:
+    inputs:
+      base-commit:
+        description: >
+          First upstream commit to be used as a base for `git format-patch`
+          command.
+        required: true
+        type: string
+      patch-start:
+        description: >
+          --start-number argument for `git format-patch` command.
+        required: true
+        type: number
+      qubes-component:
+        description: >
+          Name of QubesOS component as recognized by its build system.
+        required: true
+        type: string
+      spec-pattern:
+        description: >
+          `sed` pattern used to find insert position for patches in *.spec.in
+          files.
+        required: true
+        type: string
+
+jobs:
+  build-and-package:
+    runs-on: ubuntu-latest
+    name: Compile and package as QubesOS RPM
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 100 # need history for `git format-patch`
+
+      - uses: actions/checkout@v3
+        with:
+          repository: TrenchBoot/.github
+          path: shared
+          ref: ${{ github.job_workflow_sha }}
+
+      - name: Cache Docker image and dom0 stuff
+        uses: actions/cache@v3
+        id: docker-cache
+        with:
+          path: |
+            /tmp/qubes-fedora-builder.tar
+            /tmp/cache/dom0.tar
+          key: |
+            ${{ hashFiles('shared/qubes-builder-docker/*') }}-docker-container
+
+      - name: Load Docker image
+        if: steps.docker-cache.outputs.cache-hit == 'true'
+        run: |
+          docker load --input /tmp/qubes-fedora-builder.tar
+
+      - name: Build Docker image (optional)
+        if: steps.docker-cache.outputs.cache-hit != 'true'
+        uses: docker/build-push-action@v4
+        with:
+          tags: qubes-fedora-builder:latest
+          context: shared/qubes-builder-docker
+
+      - name: Export Docker image (optional)
+        if: steps.docker-cache.outputs.cache-hit != 'true'
+        run: |
+          docker save --output /tmp/qubes-fedora-builder.tar \
+                      qubes-fedora-builder:latest
+
+      - name: Prepare dom0 cache storage (optional)
+        if: steps.docker-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir --mode=777 /tmp/cache
+
+      - name: Build and package
+        run: |
+          docker run --privileged \
+                     -v /tmp/cache:/tmp/cache/ \
+                     -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+                     -w "$GITHUB_WORKSPACE" \
+                     -e "COMPONENT=${{ inputs.qubes-component }}" \
+                     -e "PATCH_START=${{ inputs.patch-start }}" \
+                     -e "BASE_COMMIT=${{ inputs.base-commit }}" \
+                     -e "SPEC_PATTERN=${{ inputs.spec-pattern }}" \
+                     qubes-fedora-builder:latest
+
+      - name: Save built packages
+        uses: actions/upload-artifact@v3
+        with:
+          name: qubesos.dom0.fc37-${{ inputs.qubes-component }}-${{ github.sha }}
+          path: '*.rpm'
