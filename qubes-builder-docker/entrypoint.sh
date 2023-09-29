@@ -14,6 +14,8 @@ fail() {
 [ -n "$BASE_COMMIT" ] || fail "\$BASE_COMMIT is empty"
 [ -n "$SPEC_PATTERN" ] || fail "\$SPEC_PATTERN is empty"
 
+SPEC_FILENAME=${SPEC_FILENAME:=${COMPONENT##*-}}
+
 # prevent errors due to inconsistent ownership
 git config --global --add safe.directory "$PWD"
 
@@ -40,7 +42,7 @@ chown builder:builder "${patches[@]}"
 mv "${patches[@]}" "/builder/qubes-src/$COMPONENT/"
 sed -i \
     "${SPEC_PATTERN}a${specLines}" \
-    "/builder/qubes-src/$COMPONENT/${COMPONENT##*-}.spec.in"
+    "/builder/qubes-src/$COMPONENT/${SPEC_FILENAME}.spec.in"
 
 # build the component
 su -c "make -C /builder 'COMPONENTS=$COMPONENT' '$COMPONENT'" - builder

@@ -25,6 +25,13 @@ on:
           files.
         required: true
         type: string
+      spec-file:
+        description: >
+          Name used for *.spec.in file, if not present `qubes-component` is
+          stripped from everything before last '-' (e.g. `vmm-xen` -> `xen`).
+          Extensions ('.spec.in') are always added, don't specify them here.
+        required: false
+        type: string
 
 jobs:
   build-and-package:
@@ -85,6 +92,7 @@ jobs:
                      -e "PATCH_START=${{ inputs.patch-start }}" \
                      -e "BASE_COMMIT=${{ inputs.base-commit }}" \
                      -e "SPEC_PATTERN=${{ inputs.spec-pattern }}" \
+                     -e "SPEC_FILENAME=${{ inputs.spec-file }}" \
                      qubes-fedora-builder:latest
 
       - name: Save built packages
