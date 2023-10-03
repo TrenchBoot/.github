@@ -37,6 +37,9 @@ jobs:
   build-and-package:
     runs-on: ubuntu-latest
     name: Compile and package as QubesOS RPM
+    permissions:
+      # for publishing releases
+      contents: write
 
     steps:
       - uses: actions/checkout@v3
@@ -100,3 +103,24 @@ jobs:
         with:
           name: qubesos.dom0.fc37-${{ inputs.qubes-component }}-${{ github.sha }}
           path: '*.rpm'
+
+      - name: Construct release's description
+        if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/')
+        run: |
+          for artifact in *.rpm; do
+            echo "### $artifact" >> release-body.md
+            echo '```' >> release-body.md
+            echo "wget --quiet '${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}/$artifact'" >> release-body.md
+            echo '```' >> release-body.md
+            echo '```' >> release-body.md
+            echo "curl --remote-name '${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}/$artifact'" >> release-body.md
+            echo '```' >> release-body.md
+          done
+
+      - name: Create release for a new tag
+        if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/')
+        uses: ncipollo/release-action@v1.13.0
+        with:
+          artifacts: '*.rpm'
+          artifactErrorsFailBuild: true
+          bodyFile: "release-body.md"
