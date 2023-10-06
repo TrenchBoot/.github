@@ -32,6 +32,12 @@ on:
           Extensions ('.spec.in') are always added, don't specify them here.
         required: false
         type: string
+      git-url:
+        description: >
+          URL of GitHub repository to be used by builder. Use same format as
+          GITHUB_REPOSITORY, e.g. `TrenchBoot/antievilmaid`.
+        required: false
+        type: string
 
 jobs:
   build-and-package:
@@ -50,7 +56,7 @@ jobs:
         with:
           repository: TrenchBoot/.github
           path: shared
-          ref: ${{ github.job_workflow_sha }}
+          ref: aem-build-no-patches # FIXME testing only
 
       - name: Cache Docker image and dom0 stuff
         uses: actions/cache@v3
@@ -96,6 +102,7 @@ jobs:
                      -e "BASE_COMMIT=${{ inputs.base-commit }}" \
                      -e "SPEC_PATTERN=${{ inputs.spec-pattern }}" \
                      -e "SPEC_FILENAME=${{ inputs.spec-file }}" \
+                     -e "GIT_URL=${{ inputs.git-url }}" \
                      qubes-fedora-builder:latest
 
       - name: Save built packages

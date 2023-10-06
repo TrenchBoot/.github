@@ -16,6 +16,13 @@ fail() {
 
 SPEC_FILENAME=${SPEC_FILENAME:=${COMPONENT##*-}}
 
+# Split URL into form used by builder
+GIT_PREFIX_STR=
+if [ -n "$GIT_URL" ]; then
+    GIT_PREFIX=${GIT_URL%${COMPONENT}}
+    GIT_PREFIX_STR="GIT_PREFIX=${GIT_PREFIX} BRANCH=drop_tboot INSECURE_SKIP_CHECKING=${COMPONENT}"
+fi
+
 # prevent errors due to inconsistent ownership
 git config --global --add safe.directory "$PWD"
 
@@ -26,26 +33,28 @@ if [ -f /tmp/cache/dom0.tar ]; then
 fi
 
 # fetch component's sources
-su -c "make -C /builder 'COMPONENTS=$COMPONENT' get-sources" - builder
+su -c "make -C /builder $GIT_PREFIX_STR 'COMPONENTS=$COMPONENT' get-sources" - builder
 
 # create a set of patches on top of component's base and integrate them into
 # sources
-patches=( $(git format-patch --start-number "$PATCH_START" "$BASE_COMMIT") )
-specLines=$'\\\n\\\n# Intel TXT support patches'
-set +x # less noise in build logs
-for patch in "${patches[@]}"; do
-    patchNum=${patch%%-*}
-    specLines=$specLines$'\\\n'"Patch$patchNum: $patch"
-done
-set -x
-chown builder:builder "${patches[@]}"
-mv "${patches[@]}" "/builder/qubes-src/$COMPONENT/"
-sed -i \
-    "${SPEC_PATTERN}a${specLines}" \
-    "/builder/qubes-src/$COMPONENT/${SPEC_FILENAME}.spec.in"
+if [ -z "$GIT_URL" ]; then
+    patches=( $(git format-patch --start-number "$PATCH_START" "$BASE_COMMIT") )
+    specLines=$'\\\n\\\n# Intel TXT support patches'
+    set +x # less noise in build logs
+    for patch in "${patches[@]}"; do
+        patchNum=${patch%%-*}
+        specLines=$specLines$'\\\n'"Patch$patchNum: $patch"
+    done
+    set -x
+    chown builder:builder "${patches[@]}"
+    mv "${patches[@]}" "/builder/qubes-src/$COMPONENT/"
+    sed -i \
+        "${SPEC_PATTERN}a${specLines}" \
+        "/builder/qubes-src/$COMPONENT/${SPEC_FILENAME}.spec.in"
+fi
 
 # build the component
-su -c "make -C /builder 'COMPONENTS=$COMPONENT' '$COMPONENT'" - builder
+su -c "make -C /builder $GIT_PREFIX_STR 'COMPONENTS=$COMPONENT' '$COMPONENT'" - builder
 
 # move RPMs out of the container
 rpms=( $(find "/builder/qubes-src/$COMPONENT/pkgs" -name '*.rpm') )
