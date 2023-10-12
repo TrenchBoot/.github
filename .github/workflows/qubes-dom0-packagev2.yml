@@ -1,0 +1,119 @@
+name: Test build and package QubesOS RPMs
+
+on:
+  workflow_call:
+    inputs:
+      qubes-component:
+        description: >
+          Name of QubesOS component as recognized by its build system.
+        required: true
+        type: string
+
+jobs:
+  build-and-package:
+    runs-on: ubuntu-latest
+    name: Compile and package RPM
+    permissions:
+      # for publishing releases
+      contents: write
+
+    steps:
+      - name: Install dependencies of builder script
+        # README also specified: python3-yaml rpm tree gpg openssl python3-setuptools
+        # docker.io was changed to docker because of conflict on containerd
+        run: |
+          sudo apt install --no-install-recommends --yes python3-packaging \
+          createrepo-c devscripts docker python3-docker reprepro \
+          python3-pathspec mktorrent python3-lxml python3-dateutil
+
+      - uses: actions/checkout@v3
+        with:
+          repository: QubesOS/qubes-builderv2
+
+      - name: Cache Docker image and dom0 stuff
+        uses: actions/cache@v3
+        id: docker-cache
+        with:
+          path: |
+            /tmp/qubes-builder-fedora.tar
+            /tmp/cache/dom0.tar
+          key: |
+            ${{ hashFiles('tools/*', 'dockerfiles/fedora.Dockerfile') }}-docker-container
+
+      - name: Load Docker image
+        if: steps.docker-cache.outputs.cache-hit == 'true'
+        run: |
+          docker load --input /tmp/qubes-builder-fedora.tar
+
+      - name: Build Docker image (optional)
+        if: steps.docker-cache.outputs.cache-hit != 'true'
+        run: |
+          sed -i "s/RUN useradd -m user$/RUN useradd -m user -u $UID/" dockerfiles/fedora.Dockerfile
+          tools/generate-container-image.sh docker
+
+      - name: Export Docker image (optional)
+        if: steps.docker-cache.outputs.cache-hit != 'true'
+        run: |
+          docker save --output /tmp/qubes-builder-fedora.tar \
+                      qubes-builder-fedora:latest
+
+      - name: Prepare dom0 cache storage (optional)
+        if: steps.docker-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir --mode=777 /tmp/cache
+
+      - name: Prepare configuration
+        env:
+          URL: ${{ github.repositoryUrl }}
+          # Following 2 variables are used in double expansion '${${{ github.ref_type }}}',
+          # do not change these names even though they don't follow the convention.
+          branch: ${{ github.head_ref }}
+          tag: ${{ github.ref_name }}
+        run: |
+          cp example-configs/builder-devel.yml builder.yml
+          sed -i "s#^  prefix: fepitre/qubes-#  prefix: QubesOS/qubes-#" builder.yml
+          sed -i "s#^  branch: builderv2#  branch: main#" builder.yml
+          sed -i "s#^artifacts-dir: .*#artifacts-dir: $PWD/artifacts#" builder.yml
+          sed -i "1,/^  - ${{ inputs.qubes-component }}/s#^  - ${{ inputs.qubes-component }}#&:#" builder.yml
+          sed -i "/^  - ${{ inputs.qubes-component }}:/a\      verification-mode: insecure-skip-checking" builder.yml
+          sed -i "/^  - ${{ inputs.qubes-component }}:/a\      branch: ${${{ github.ref_type }}}" builder.yml
+          sed -i "/^  - ${{ inputs.qubes-component }}:/a\      url: ${URL/git:/https:}" builder.yml
+          echo "::group::builder.yml"
+          cat builder.yml
+          echo "::endgroup::"
+
+      - name: Build and package
+        env:
+          DEBUG: ${{ runner.debug == 1 && '--debug --verbose' || '' }}
+        run: |
+          ./qb $DEBUG -c ${{ inputs.qubes-component }} package fetch prep build
+          rpms=( $(find "artifacts/components/${{ inputs.qubes-component }}/" -regex ".*/build/rpm/[^/]*.rpm") )
+          cp --verbose "${rpms[@]}" .
+
+      - name: Save built packages
+        uses: actions/upload-artifact@v3
+        with:
+          if-no-files-found: error
+          name: qubesos.dom0.fc37-${{ inputs.qubes-component }}-${{ github.sha }}
+          path: '*.rpm'
+
+      - name: Construct release's description
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        run: |
+          for artifact in *.rpm; do
+            echo "### $artifact" >> release-body.md
+            echo '```' >> release-body.md
+            echo "wget --quiet '${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}/$artifact'" >> release-body.md
+            echo '```' >> release-body.md
+            echo '```' >> release-body.md
+            echo "curl --remote-name '${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}/$artifact'" >> release-body.md
+            echo '```' >> release-body.md
+          done
+
+      - name: Create release for a new tag
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        uses: ncipollo/release-action@v1.13.0
+        with:
+          artifacts: '*.rpm'
+          artifactErrorsFailBuild: true
+          bodyFile: "release-body.md"
