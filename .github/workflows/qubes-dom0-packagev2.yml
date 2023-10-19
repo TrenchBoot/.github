@@ -36,7 +36,6 @@ jobs:
         with:
           path: |
             /tmp/qubes-builder-fedora.tar
-            /tmp/cache/dom0.tar
           key: |
             ${{ hashFiles('tools/*', 'dockerfiles/fedora.Dockerfile') }}-docker-container
 
@@ -56,11 +55,6 @@ jobs:
         run: |
           docker save --output /tmp/qubes-builder-fedora.tar \
                       qubes-builder-fedora:latest
-
-      - name: Prepare dom0 cache storage (optional)
-        if: steps.docker-cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir --mode=777 /tmp/cache
 
       - name: Prepare configuration
         env:
