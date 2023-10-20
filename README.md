@@ -87,7 +87,7 @@ modifications to workflows are necessary.
 
 Create a workflow file like `.github/workflows/build.yml` inside of your
 repository.  It will have 3 parts: name, triggering conditions and invocation
-of one of the workflows defined here.  Let's use [TrenchBoot/xen][xen] as an
+of one of the workflows defined here.  Let's use [TrenchBoot/grub][grub] as an
 example.
 
 ### Name
