@@ -59,6 +59,7 @@ jobs:
       - name: Prepare configuration
         env:
           URL: ${{ github.repositoryUrl }}
+          COMPONENT: ${{ inputs.qubes-component }}
           # Following 2 variables are used in double expansion '${${{ github.ref_type }}}',
           # do not change these names even though they don't follow the convention.
           branch: ${{ github.head_ref }}
@@ -75,10 +76,10 @@ jobs:
           sed -i "s#^  prefix: fepitre/qubes-#  prefix: QubesOS/qubes-#" builder.yml
           sed -i "s#^  branch: builderv2#  branch: main#" builder.yml
           sed -i "s#^artifacts-dir: .*#artifacts-dir: $PWD/artifacts#" builder.yml
-          sed -i "1,/^  - ${{ inputs.qubes-component }}/s#^  - ${{ inputs.qubes-component }}#&:#" builder.yml
-          sed -i "/^  - ${{ inputs.qubes-component }}:/a\      verification-mode: insecure-skip-checking" builder.yml
-          sed -i "/^  - ${{ inputs.qubes-component }}:/a\      branch: $branch_name" builder.yml
-          sed -i "/^  - ${{ inputs.qubes-component }}:/a\      url: ${URL/git:/https:}" builder.yml
+          sed -i "1,/^  - $COMPONENT/s#^  - $COMPONENT#&:#" builder.yml
+          sed -i "/^  - $COMPONENT:/a\      verification-mode: insecure-skip-checking" builder.yml
+          sed -i "/^  - $COMPONENT:/a\      branch: $branch_name" builder.yml
+          sed -i "/^  - $COMPONENT:/a\      url: ${URL/git:/https:}" builder.yml
           echo "::group::builder.yml"
           cat builder.yml
           echo "::endgroup::"
