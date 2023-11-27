@@ -68,14 +68,18 @@ package, hence significantly reduced set of parameters.
 There is also no need to use `qubes-builder-docker/` in this case because
 builder's repository contains its own Docker image.
 
-| Parameter         | Type   | Req. | Def. | Description
-| ---------         | ----   | ---- | ---- | -----------
-| `qubes-component` | string | Yes  | -    | Name of QubesOS component as recognized by its build system.
+| Parameter           | Type   | Req. | Def. | Description
+| ---------           | ----   | ---- | ---- | -----------
+| `qubes-component`   | string | Yes  | -    | Name of QubesOS component as recognized by its build system.
+| `qubes-pkg-src-dir` | string | No   | -    | Relative path to directory containing Qubes OS package.
 
-Used by [TrenchBoot/qubes-antievilmaid][aem].
+Used by [TrenchBoot/qubes-antievilmaid][aem] and
+[TrenchBoot/secure-kernel-loader][skl].  The latter makes use of
+`qubes-pkg-src-dir` as Qubes OS package is stored within the repository itself.
 
 [qubes-builder-v2]: https://github.com/QubesOS/qubes-builderv2
 [aem]: https://github.com/TrenchBoot/qubes-antievilmaid/blob/2b6b796e31789fca599986c9cfb0a3ceced5967d/.github/workflows/build.yml
+[skl]: https://github.com/TrenchBoot/secure-kernel-loader
 
 ## Usage
 

@@ -8,6 +8,11 @@ on:
           Name of QubesOS component as recognized by its build system.
         required: true
         type: string
+      qubes-pkg-src-dir:
+        description: >
+          Relative path to directory containing Qubes OS package.
+        required: false
+        type: string
 
 jobs:
   build-and-package:
@@ -60,11 +65,17 @@ jobs:
         env:
           URL: ${{ github.repositoryUrl }}
           COMPONENT: ${{ inputs.qubes-component }}
+          PKG_DIR: ${{ inputs.qubes-pkg-src-dir }}
           # Following 2 variables are used in double expansion '${${{ github.ref_type }}}',
           # do not change these names even though they don't follow the convention.
           branch: ${{ github.head_ref }}
           tag: ${{ github.ref_name }}
         run: |
+          cp example-configs/builder-devel.yml builder.yml
+          sed -i "s#^  prefix: fepitre/qubes-#  prefix: QubesOS/qubes-#" builder.yml
+          sed -i "s#^  branch: builderv2#  branch: main#" builder.yml
+          sed -i "s#^artifacts-dir: .*#artifacts-dir: $PWD/artifacts#" builder.yml
+
           branch_name=${${{ github.ref_type }}}
           if [ -z "$branch_name" ]; then
               # github.head_ref is set only for pull requests, this should
@@ -72,14 +83,61 @@ jobs:
               branch_name=$(basename "$GITHUB_REF")
           fi
 
-          cp example-configs/builder-devel.yml builder.yml
-          sed -i "s#^  prefix: fepitre/qubes-#  prefix: QubesOS/qubes-#" builder.yml
-          sed -i "s#^  branch: builderv2#  branch: main#" builder.yml
-          sed -i "s#^artifacts-dir: .*#artifacts-dir: $PWD/artifacts#" builder.yml
-          sed -i "1,/^  - $COMPONENT/s#^  - $COMPONENT#&:#" builder.yml
-          sed -i "/^  - $COMPONENT:/a\      verification-mode: insecure-skip-checking" builder.yml
-          sed -i "/^  - $COMPONENT:/a\      branch: $branch_name" builder.yml
-          sed -i "/^  - $COMPONENT:/a\      url: ${URL/git:/https:}" builder.yml
+          if [ -n "$PKG_DIR" ]; then
+              #
+              # 1. Clone repository locally
+              # 2. Add files required by qubes-builderv2
+              # 3. Commit them
+              # 4. Put local path as a repository URL to configuration file
+              #
+
+              # `plugins/fetch` is copied inside Docker container, place clone there
+              rel_clone_dir=plugins/fetch/tmp_clone
+              clone_dir=qubesbuilder/$rel_clone_dir
+              git clone --depth 1 --branch "$branch_name" "${URL/git:/https:}" "$clone_dir"
+
+              # qubes-builderv2 expects top directory of extracted sources to
+              # follow "name-version" naming scheme and will fail if other
+              # naming is used
+              #
+              # At the same time when generating a source archive, it uses
+              # naming scheme from `Source0`, which inevitably leads to a
+              # failure if it's not what qubes-builderv2 expects.
+              sed '/^Source0:/s/\t.*/\t%{name}-%{version}.tar.gz/' \
+                  "$clone_dir/$PKG_DIR/$COMPONENT.spec.in" \
+                  > "$clone_dir/$COMPONENT.spec.in"
+
+              echo 1 > "$clone_dir/rel"
+              echo "0+$(git -C "$clone_dir" show-ref -s "$branch_name")" \
+                  > "$clone_dir/version"
+              cat > "$clone_dir/.qubesbuilder" <<EOF
+              host:
+                rpm:
+                  build:
+                  - $COMPONENT.spec
+          EOF
+              git config --global user.name user.name
+              git config --global user.email user.email
+              git -C "$clone_dir" add .
+              git -C "$clone_dir" commit -m 'CI changes'
+              if [ ${{ github.ref_type }} = tag ]; then
+                # Without this original commit is going to be used
+                git -C "$clone_dir" tag -f "$branch_name"
+              fi
+
+              # It's a new component not known to the builder
+              sed -i "/^components:/a\  - $COMPONENT:" builder.yml
+              sed -i "/^  - $COMPONENT:/a\      verification-mode: insecure-skip-checking" builder.yml
+              sed -i "/^  - $COMPONENT:/a\      branch: $branch_name" builder.yml
+              sed -i "/^  - $COMPONENT:/a\      url: /builder/$rel_clone_dir" builder.yml
+          else
+              # It's an existing component that needs some overrides
+              sed -i "1,/^  - $COMPONENT/s#^  - $COMPONENT#&:#" builder.yml
+              sed -i "/^  - $COMPONENT:/a\      verification-mode: insecure-skip-checking" builder.yml
+              sed -i "/^  - $COMPONENT:/a\      branch: $branch_name" builder.yml
+              sed -i "/^  - $COMPONENT:/a\      url: ${URL/git:/https:}" builder.yml
+          fi
+
           echo "::group::builder.yml"
           cat builder.yml
           echo "::endgroup::"
