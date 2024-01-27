@@ -31,12 +31,12 @@ jobs:
           createrepo-c devscripts docker python3-docker reprepro \
           python3-pathspec mktorrent python3-lxml python3-dateutil
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           repository: QubesOS/qubes-builderv2
 
       - name: Cache Docker image and dom0 stuff
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         id: docker-cache
         with:
           path: |
@@ -151,7 +151,7 @@ jobs:
           cp --verbose "${rpms[@]}" .
 
       - name: Save built packages
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           if-no-files-found: error
           name: qubesos.dom0.fc37-${{ inputs.qubes-component }}-${{ github.sha }}
