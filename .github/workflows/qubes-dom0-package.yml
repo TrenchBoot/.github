@@ -42,18 +42,18 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 100 # need history for `git format-patch`
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           repository: TrenchBoot/.github
           path: shared
           ref: ${{ github.job_workflow_sha }}
 
       - name: Cache Docker image and dom0 stuff
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         id: docker-cache
         with:
           path: |
@@ -69,7 +69,7 @@ jobs:
 
       - name: Build Docker image (optional)
         if: steps.docker-cache.outputs.cache-hit != 'true'
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v5
         with:
           tags: qubes-fedora-builder:latest
           context: shared/qubes-builder-docker
@@ -99,7 +99,7 @@ jobs:
                      qubes-fedora-builder:latest
 
       - name: Save built packages
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: qubesos.dom0.fc37-${{ inputs.qubes-component }}-${{ github.sha }}
           path: '*.rpm'
