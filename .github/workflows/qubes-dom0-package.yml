@@ -119,7 +119,7 @@ jobs:
 
       - name: Create release for a new tag
         if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/')
-        uses: ncipollo/release-action@v1.13.0
+        uses: ncipollo/release-action@v1.14.0
         with:
           artifacts: '*.rpm'
           artifactErrorsFailBuild: true
