@@ -71,10 +71,9 @@ jobs:
           branch: ${{ github.head_ref }}
           tag: ${{ github.ref_name }}
         run: |
-          cp example-configs/builder-devel.yml builder.yml
-          sed -i "s#^  prefix: fepitre/qubes-#  prefix: QubesOS/qubes-#" builder.yml
-          sed -i "s#^  branch: builderv2#  branch: main#" builder.yml
-          sed -i "s#^artifacts-dir: .*#artifacts-dir: $PWD/artifacts#" builder.yml
+          cp example-configs/qubes-os-main.yml builder.yml
+          sed -i "s#^  type: qubes#  type: docker#" builder.yml
+          sed -i "s#^    dispvm: \"@dispvm\"#    image: \"qubes-builder-fedora:latest\"#" builder.yml
 
           branch_name=${${{ github.ref_type }}}
           if [ -z "$branch_name" ]; then
