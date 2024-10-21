@@ -31,7 +31,7 @@ su -c "make -C /builder 'COMPONENTS=$COMPONENT' get-sources" - builder
 # create a set of patches on top of component's base and integrate them into
 # sources
 patches=( $(git format-patch --start-number "$PATCH_START" "$BASE_COMMIT") )
-specLines=$'\\\n\\\n# Intel TXT support patches'
+specLines=$'\\\n\\\n# TrenchBoot support patches'
 set +x # less noise in build logs
 for patch in "${patches[@]}"; do
     patchNum=${patch%%-*}
@@ -41,7 +41,7 @@ set -x
 chown builder:builder "${patches[@]}"
 mv "${patches[@]}" "/builder/qubes-src/$COMPONENT/"
 sed -i \
-    "${SPEC_PATTERN}a${specLines}" \
+    "/^Patch${PATCH_START:: -2}/d; ${SPEC_PATTERN}a${specLines}" \
     "/builder/qubes-src/$COMPONENT/${SPEC_FILENAME}.spec.in"
 
 # build the component
