@@ -16,7 +16,7 @@ on:
 
 jobs:
   build-and-package:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: Compile and package RPM
     permissions:
       # for publishing releases
@@ -24,11 +24,10 @@ jobs:
 
     steps:
       - name: Install dependencies of builder script
-        # README also specified: python3-yaml rpm tree gpg openssl python3-setuptools
         # docker.io was changed to docker because of conflict on containerd
         run: |
-          sudo apt install --no-install-recommends --yes python3-packaging \
-          createrepo-c devscripts docker python3-docker reprepro \
+          sudo apt install --no-install-recommends --yes \
+          createrepo-c devscripts python3-docker reprepro \
           python3-pathspec mktorrent python3-lxml python3-dateutil
 
       - uses: actions/checkout@v4
