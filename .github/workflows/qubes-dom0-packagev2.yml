@@ -70,10 +70,9 @@ jobs:
           branch: ${{ github.head_ref }}
           tag: ${{ github.ref_name }}
         run: |
-          cp example-configs/builder-devel.yml builder.yml
-          sed -i "s#^  prefix: fepitre/qubes-#  prefix: QubesOS/qubes-#" builder.yml
-          sed -i "s#^  branch: builderv2#  branch: main#" builder.yml
-          sed -i "s#^artifacts-dir: .*#artifacts-dir: $PWD/artifacts#" builder.yml
+          cp example-configs/qubes-os-main.yml builder.yml
+          # Switch from Qubes to Docker executor
+          sed -i "/^executor:$/,+4d; /^#executor:$/,+3s/#//" builder.yml
 
           branch_name=${${{ github.ref_type }}}
           if [ -z "$branch_name" ]; then
@@ -104,7 +103,9 @@ jobs:
               # failure if it's not what qubes-builderv2 expects.
               sed '/^Source0:/s/\t.*/\t%{name}-%{version}.tar.gz/' \
                   "$clone_dir/$PKG_DIR/$COMPONENT.spec.in" \
-                  > "$clone_dir/$COMPONENT.spec.in"
+                  > "$clone_dir/$COMPONENT.spec.in.tmp"
+              # Temporary file handles case when qubes-pkg-src-dir is set to '.'
+              mv "$clone_dir/$COMPONENT.spec.in.tmp" "$clone_dir/$COMPONENT.spec.in"
 
               echo 1 > "$clone_dir/rel"
               echo "0+$(git -C "$clone_dir" show-ref -s "$branch_name")" \
@@ -124,7 +125,16 @@ jobs:
                 git -C "$clone_dir" tag -f "$branch_name"
               fi
 
-              # It's a new component not known to the builder
+              # If it's an existing component without options in builder.yml,
+              # just remove the line from the file
+              sed -i "/^  - $COMPONENT$/d" builder.yml
+
+              # If it's an existing component with options in builder.yml,
+              # rename it to a dummy component. This avoids having a duplicated
+              # name and at the same time doesn't require the removal of options
+              sed -i "/^  - $COMPONENT:$/c\ \ - does_not_exist:" builder.yml
+
+              # Add a new component to builder.yml
               sed -i "/^components:/a\  - $COMPONENT:" builder.yml
               sed -i "/^  - $COMPONENT:/a\      verification-mode: insecure-skip-checking" builder.yml
               sed -i "/^  - $COMPONENT:/a\      branch: $branch_name" builder.yml
