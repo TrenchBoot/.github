@@ -108,7 +108,7 @@ jobs:
               mv "$clone_dir/$COMPONENT.spec.in.tmp" "$clone_dir/$COMPONENT.spec.in"
 
               echo 1 > "$clone_dir/rel"
-              echo "0+$(git -C "$clone_dir" show-ref -s "$branch_name")" \
+              echo "0+$(git -C "$clone_dir" show-ref -s "$branch_name" | head -1)" \
                   > "$clone_dir/version"
               cat > "$clone_dir/.qubesbuilder" <<EOF
               host:
