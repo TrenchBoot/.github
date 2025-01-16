@@ -70,7 +70,7 @@ jobs:
           branch: ${{ github.head_ref }}
           tag: ${{ github.ref_name }}
         run: |
-          cp example-configs/qubes-os-main.yml builder.yml
+          cp example-configs/qubes-os-r4.2.yml builder.yml
           # Switch from Qubes to Docker executor
           sed -i "/^executor:$/,+4d; /^#executor:$/,+3s/#//" builder.yml
 
