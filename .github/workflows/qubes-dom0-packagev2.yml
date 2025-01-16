@@ -13,6 +13,11 @@ on:
           Relative path to directory containing Qubes OS package.
         required: false
         type: string
+      qubes-pkg-version:
+        description: >
+          Forced version of a package.
+        required: false
+        type: string
 
 jobs:
   build-and-package:
@@ -67,6 +72,7 @@ jobs:
           URL: ${{ github.repositoryUrl }}
           COMPONENT: ${{ inputs.qubes-component }}
           PKG_DIR: ${{ inputs.qubes-pkg-src-dir }}
+          PKG_VER: ${{ inputs.qubes-pkg-version }}
           # Following 2 variables are used in double expansion '${${{ github.ref_type }}}',
           # do not change these names even though they don't follow the convention.
           branch: ${{ github.head_ref }}
@@ -110,8 +116,10 @@ jobs:
               mv "$clone_dir/$COMPONENT.spec.in.tmp" "$clone_dir/$COMPONENT.spec.in"
 
               echo 1 > "$clone_dir/rel"
-              echo "0+$(git -C "$clone_dir" show-ref -s "$branch_name" | head -1)" \
-                  > "$clone_dir/version"
+              if [ -z "$PKG_VER" ]; then
+                  PKG_VER="0+$(git -C "$clone_dir" show-ref -s "$branch_name" | head -1)"
+              fi
+              echo "$PKG_VER" > "$clone_dir/version"
               cat > "$clone_dir/.qubesbuilder" <<EOF
               host:
                 rpm:
