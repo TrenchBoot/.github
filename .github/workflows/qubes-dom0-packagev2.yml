@@ -160,6 +160,18 @@ jobs:
               sed -i "/^  - $COMPONENT:/a\      verification-mode: insecure-skip-checking" builder.yml
               sed -i "/^  - $COMPONENT:/a\      branch: $branch_name" builder.yml
               sed -i "/^  - $COMPONENT:/a\      url: /builder/$rel_clone_dir" builder.yml
+
+              echo "::group::version"
+              cat $clone_dir/version
+              echo "::endgroup::"
+
+              echo "::group::$COMPONENT.spec.in"
+              cat $clone_dir/$COMPONENT.spec.in
+              echo "::endgroup::"
+
+              echo "::group::.qubesbuilder"
+              cat $clone_dir/.qubesbuilder
+              echo "::endgroup::"
           else
               # It's an existing component that needs some overrides
               sed -i "1,/^  - $COMPONENT/s#^  - $COMPONENT#&:#" builder.yml
@@ -170,18 +182,6 @@ jobs:
 
           echo "::group::builder.yml"
           cat builder.yml
-          echo "::endgroup::"
-
-          echo "::group::version"
-          cat $clone_dir/version
-          echo "::endgroup::"
-
-          echo "::group::$COMPONENT.spec.in"
-          cat $clone_dir/$COMPONENT.spec.in
-          echo "::endgroup::"
-
-          echo "::group::.qubesbuilder"
-          cat $clone_dir/.qubesbuilder
           echo "::endgroup::"
 
       - name: Build and package
