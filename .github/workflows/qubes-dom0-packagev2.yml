@@ -37,13 +37,24 @@ jobs:
         # docker.io was changed to docker because of conflict on containerd
         run: |
           sudo apt install --no-install-recommends --yes \
-          createrepo-c devscripts python3-docker reprepro \
-          python3-pathspec mktorrent python3-lxml python3-dateutil
+          createrepo-c devscripts gpg python3-docker reprepro \
+          python3-pathspec mktorrent python3-lxml python3-dateutil \
+
+      - name: Compile sq
+        run: |
+          sudo apt install --no-install-recommends --yes \
+          build-essential capnproto clang curl git libassuan-dev libbz2-dev \
+          libgpgme-dev libnpth-dev libsqlite3-dev libssl-dev nettle-dev \
+          pkg-config zlib1g-dev && \
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+          source "$HOME/.cargo/env" && \
+          cargo install --version 1.3.1 --locked sequoia-sq && \
+          sudo mv "$HOME/.cargo/bin/sq" /usr/local/bin/
 
       - uses: actions/checkout@v4
         with:
           repository: QubesOS/qubes-builderv2
-          ref: 80dd898cc0472dd99f161f1d1c7c44da64de93f2
+          ref: 5327e41b3d68befc61bee87fb1ac0033662d575f
           fetch-depth: 0
 
       - name: Cache Docker image and dom0 stuff
@@ -183,6 +194,15 @@ jobs:
           echo "::group::builder.yml"
           cat builder.yml
           echo "::endgroup::"
+
+      - name: Disable AppArmor
+        # Ubuntu runner with Fedora 42 Docker container fails due to AppArmor:
+        # https://github.com/fedora-cloud/docker-brew-fedora/issues/117
+        uses: cisagov/action-disable-apparmor@v1
+
+      - name: Disable kernel.apparmor_restrict_unprivileged_userns
+        # See the AppArmor failures above
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Build and package
         env:
