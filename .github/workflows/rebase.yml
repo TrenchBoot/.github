@@ -1,0 +1,85 @@
+---
+name: Try rebasing on updated upstream, report in case of conflicts
+
+on:
+  workflow_call:
+    secrets:
+      first-remote-token:
+        description: >
+          Personal access token for performing the following operations on the
+          downstream-repo: fetch the repository, create a branch, delete a
+          branch, create commits on a branch, push to a branch, open a PR, close
+          a PR, get list of PRs.
+        required: true
+    inputs:
+      downstream-repo:
+        description: >
+          <first_repo> parameter for the rebase.sh script.
+        required: true
+        type: string
+      downstream-branch:
+        description: >
+          <first_repo_branch> parameter for the rebase.sh script.
+        required: true
+        type: string
+      upstream-repo:
+        description: >
+          <second_repo> parameter for the rebase.sh script.
+        required: true
+        type: string
+      upstream-branch:
+        description: >
+          <second_repo_branch> parameter for the rebase.sh script.
+        required: true
+        type: string
+      commit-user-name:
+        description: >
+          NAME parameter for the --upstream-branch option of the rebase.sh
+          script.
+        required: true
+        type: string
+      commit-user-email:
+        description: >
+          EMAIL parameter for the --commit-user-email option of the rebase.sh
+          script.
+        required: true
+        type: string
+      cicd-trigger-resume:
+        description: >
+          MESSAGE parameter for the --cicd-trigger-resume option of the
+          rebase.sh script.
+        required: true
+        type: string
+
+jobs:
+  build-and-package:
+    runs-on: ubuntu-latest
+    name: Try rebasing on updated upstream, report in case of conflicts
+    permissions:
+      # For creation/deletion/pushing to branches and creating PRs
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: TrenchBoot/.github
+          path: shared
+          ref: master
+      - name: Run script for rebasing
+        env:
+          FIRST_REMOTE_TOKEN: ${{ secrets.first-remote-token }}
+          DOWNSTREAM_REPO: ${{ inputs.downstream-repo }}
+          DOWNSTREAM_BRANCH: ${{ inputs.downstream-branch }}
+          UPSTREAM_REPO: ${{ inputs.upstream-repo }}
+          UPSTREAM_BRANCH: ${{ inputs.upstream-branch }}
+          NAME: ${{ inputs.commit-user-name }}
+          EMAIL: ${{ inputs.commit-user-email }}
+          MESSAGE: ${{ inputs.cicd-trigger-resume }}
+        run: |
+          shared/scripts/rebase.sh --first-remote-token "$FIRST_REMOTE_TOKEN" \
+          --commit-user-name "$NAME" \
+          --commit-user-email "$EMAIL" \
+          --cicd-trigger-resume "$MESSAGE" \
+          "$DOWNSTREAM_REPO" \
+          "$DOWNSTREAM_BRANCH" \
+          "$UPSTREAM_REPO" \
+          "$UPSTREAM_BRANCH"
