@@ -76,10 +76,6 @@ builder's repository contains its own Docker image.
 | `qubes-pkg-revision`     | string | No   | `1`  | Revision for RPM packages
 | `qubes-component-branch` | string | No   | -    | Forced repository branch to build component from
 
-Used by [TrenchBoot/qubes-antievilmaid][aem] and
-[TrenchBoot/secure-kernel-loader][skl].  The latter makes use of
-`qubes-pkg-src-dir` as Qubes OS package is stored within the repository itself.
-
 [qubes-builder-v2]: https://github.com/QubesOS/qubes-builderv2
 [aem]: https://github.com/TrenchBoot/qubes-antievilmaid/blob/2b6b796e31789fca599986c9cfb0a3ceced5967d/.github/workflows/build.yml
 [skl]: https://github.com/TrenchBoot/secure-kernel-loader
