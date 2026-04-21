@@ -415,6 +415,24 @@ check_if_resolved() {
     return 1
 }
 
+# This function checks for empty commits between two refs. There is no return
+# values. Instead it prints a list of empty commits to the STDOUT.
+check_for_empty_commits() {
+    local base="$1"
+    local head_ref="$2"
+    local commits=""
+    local temp=""
+
+    temp="$(git log "$base"^.."$head_ref" --format="%H %s" 2> "$TMP_LOG_FILE")"
+    while read sha msg; do
+        [ -z "$(git diff-tree --no-commit-id -r "$sha" 2> "$TMP_LOG_FILE")" ] \
+            && commits+="
+$sha $msg"
+    done <<< "$temp"
+
+    echo "$commits"
+}
+
 # Configuration and initial values:
 declare -a BRANCHES
 declare BRANCH_TEMP
@@ -587,12 +605,27 @@ if [[ -z "$COMMIT" && -z "$BRANCH" ]]; then
 
     echo "Rebasing '$FIRST_REPO_BRANCH' onto '$SECOND_REPO_REF'..."
     
-    if git rebase "$SECOND_REPO_REF" &> "$TMP_LOG_FILE"; then
+    # The check_if_resolved() function checks whether the conflict has been
+    # resolved by comparing the number of commits on the conflict branch, the
+    # default behavior of the git rebase is to drop empty commits that are ther
+    # result of rebase operation. This could mess up the check_if_resolved().
+    # Hence, we better keep the empty commits on the branch but inform the
+    # developer about them.
+    if git rebase --empty=keep "$SECOND_REPO_REF" &> "$TMP_LOG_FILE"; then
         echo "Rebase completed successfuly. No conflicts."
 
         # Do not push to the same branch on the remote repository to avoid
         # force pushes:
         git checkout -b "$FIRST_REPO_BRANCH-rebased" "$FIRST_REPO_BRANCH" &> "$TMP_LOG_FILE"
+        empty_commits="$(check_for_empty_commits "$SECOND_REPO_REF" "$FIRST_REPO_BRANCH-rebased")"
+
+        if [ -n "$empty_commits" ]; then
+            SUCCESSFUL_REBASE_MESSAGE+="
+$empty_commits
+
+You might want to drop them."
+        fi
+
         if [[ "$LOCAL" != "true" && -n "$TOKEN" ]]; then
             push_branch_remote "$TOKEN" "$FIRST_REPO_BRANCH-rebased" "$FIRST_REPO_REMOTE_NAME"
             if ! check_for_pr "$TOKEN" "$FIRST_REPO" "$FIRST_REPO_BRANCH-rebased" "$FIRST_REPO_BRANCH" ; then
@@ -610,12 +643,26 @@ elif [[ -n "$COMMIT" && -n "$BRANCH" ]]; then
     fi
 
     echo "Continuing rebase '$FIRST_REPO_BRANCH' onto '$BRANCH' using commit $COMMIT as a base..."
-    
-    if git rebase --onto "$BRANCH" "$COMMIT" "$FIRST_REPO_BRANCH" &> "$TMP_LOG_FILE"; then
+
+    # The check_if_resolved() function checks whether the conflict has been
+    # resolved by comparing the number of commits on the conflict branch, the
+    # default behavior of the git rebase is to drop empty commits that are ther
+    # result of rebase operation. This could mess up the check_if_resolved().
+    # Hence, we better keep the empty commits on the branch but inform the
+    # developer about them.
+    if git rebase --empty=keep --onto "$BRANCH" "$COMMIT" "$FIRST_REPO_BRANCH" &> "$TMP_LOG_FILE"; then
         # Delete the temporary conflict branch so there is no leftovers after a
         # success:
         git branch --delete "$BRANCH" &> "$TMP_LOG_FILE"
         git checkout -b "$FIRST_REPO_BRANCH-rebased" "$FIRST_REPO_BRANCH" &> "$TMP_LOG_FILE"
+        empty_commits="$(check_for_empty_commits "$SECOND_REPO_REF" "$FIRST_REPO_BRANCH-rebased")"
+
+        if [ -n "$empty_commits" ]; then
+            SUCCESSFUL_REBASE_MESSAGE+="
+$empty_commits
+
+You might want to drop them."
+        fi
 
         if [[ "$LOCAL" != "true" && -n "$TOKEN" ]]; then
             # Delete the temporary conflict branch on remote so there is no
