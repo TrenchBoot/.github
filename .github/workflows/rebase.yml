@@ -34,7 +34,7 @@ on:
         type: string
       commit-user-name:
         description: >
-          NAME parameter for the --upstream-branch option of the rebase.sh
+          NAME parameter for the --commit-user-name option of the rebase.sh
           script.
         required: true
         type: string

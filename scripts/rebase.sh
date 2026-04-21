@@ -4,6 +4,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+trap error_handling EXIT
+
 set -euo pipefail
 
 # Help
@@ -126,14 +128,14 @@ EOF
 # 0: Success.
 # 1: Some issue.
 push_branch_remote() {
-    local token="${1:-}"
-    local branch="${2:-}"
-    local remote="${3:-}"
+    local token="$1"
+    local branch="$2"
+    local remote="$3"
 
     # The remote URL must contain the token for the ref to be modified on the
     # remote via personal access token authentication:
-    git remote get-url "$remote" 2> /dev/null | grep -F "$token" &> /dev/null || return 1
-    git push "$remote" "$branch" &> /dev/null || return 1
+    git remote get-url "$remote" 2> "$TMP_LOG_FILE" | grep -F "$token" &> "$TMP_LOG_FILE" || return 1
+    git push "$remote" "$branch" &> "$TMP_LOG_FILE" || return 1
 
     return 0
 }
@@ -144,9 +146,9 @@ push_branch_remote() {
 # 2: The function tried to delete a branch that was not created by this script
 # and probably belongs to somebody else.
 delete_branch_remote() {
-    local token="${1:-}"
-    local branch="${2:-}"
-    local remote="${3:-}"
+    local token="$1"
+    local branch="$2"
+    local remote="$3"
     local temp=""
     local commit=""
 
@@ -154,11 +156,11 @@ delete_branch_remote() {
     # script and not some other branch:
     # 1. The branch must match the pattern for branches with conflicts that are
     # created by this script:
-    echo "$branch" | grep -E '.*-[a-z0-9]{40}-conflict' &> /dev/null || return 2
+    echo "$branch" | grep -E '.*-[a-z0-9]{40}-conflict' &> "$TMP_LOG_FILE" || return 2
     # 2. The branch name must contain a hash of existing commit
     temp="${branch%-conflict}"
     commit="${temp##*-}"
-    git show "$commit" &> /dev/null || return 2
+    git show "$commit" &> "$TMP_LOG_FILE" || return 2
     # The checks above are reasonable but not sufficient, as there is a
     # probability that a branch that will match the pattern will be created by a
     # user. At git level we do not have access to the information on who created
@@ -172,8 +174,8 @@ delete_branch_remote() {
 
     # The remote URL must contain the token for the ref to be modified on the
     # remote via personal access token authentication:
-    git remote get-url "$remote" 2> /dev/null | grep -F "$token" &> /dev/null || return 1
-    git push "$remote" --delete "$branch" &> /dev/null || return 1
+    git remote get-url "$remote" 2> "$TMP_LOG_FILE" | grep -F "$token" &> "$TMP_LOG_FILE" || return 1
+    git push "$remote" --delete "$branch" &> "$TMP_LOG_FILE" || return 1
 
     return 0
 }
@@ -183,12 +185,12 @@ delete_branch_remote() {
 # 1: Some issue.
 # 2: PR was not created.
 create_pr_remote() {
-    local token="${1:-}"
-    local repo_url="${2:-}"
-    local head_branch="${3:-}"
-    local base_branch="${4:-}"
-    local pr_title="${5:-}"
-    local pr_body="${6:-}"
+    local token="$1"
+    local repo_url="$2"
+    local head_branch="$3"
+    local base_branch="$4"
+    local pr_title="$5"
+    local pr_body="$6"
     local payload repo_path owner repo_name response http_code pr_url body
 
 
@@ -261,6 +263,17 @@ print(json.dumps({
     return 0
 }
 
+error_handling() {
+    exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        echo "ERROR: $BASH_COMMAND failed!" >&2
+        echo -e "The logs from the last executed command:\n" >&2
+        cat "$TMP_LOG_FILE" >&2
+    fi
+
+    rm -f "$TMP_LOG_FILE"
+}
+
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case $1 in
@@ -310,16 +323,16 @@ parse_args() {
 # 0: Success.
 # 1: No HTTPS protocol prefix found in the remote repository URL.
 build_url_with_token() {
-    local url="${1:-}"
-    local token="${2:-}"
+    local url="$1"
+    local token="$2"
     local repo_path
 
     # The limit on HTTPS only is because of the personal access token that is
     # used here and works only over HTTPS:
-    echo "$url" | grep 'https://' &> /dev/null || return 1
+    echo "$url" | grep 'https://' &> "$TMP_LOG_FILE" || return 1
 
     repo_path="$(echo "$url" | sed -E 's|.*github\.com[:/]||; s|\.git$||')"
-    echo "https://$token@github.com/$repo_path.git" 2> /dev/null
+    echo "https://$token@github.com/$repo_path.git" 2> "$TMP_LOG_FILE"
 
     return 0
 }
@@ -328,11 +341,11 @@ build_url_with_token() {
 # 0: Rebase is needed.
 # 1: Rebase is not needed.
 check_for_rebase() {
-    local head_ref="${1:-}"
-    local newbase="${2:-}"
+    local head_ref="$1"
+    local newbase="$2"
     local result
 
-    result="$(git log "$head_ref".."$newbase" --oneline 2> /dev/null)"
+    result="$(git log "$head_ref".."$newbase" --oneline 2> "$TMP_LOG_FILE")"
 
     if [[ -z "$result" ]]; then
         return 1
@@ -346,10 +359,10 @@ check_for_rebase() {
 # 0: Does exist.
 # 1: Does not exist.
 check_for_pr() {
-    local token="${1:-}"
-    local repo_url="${2:-}"
-    local branch1="${3:-}"
-    local branch2="${4:-}"
+    local token="$1"
+    local repo_url="$2"
+    local branch1="$3"
+    local branch2="$4"
     local result=1
     local response repo_path owner repo_name
 
@@ -371,7 +384,7 @@ check_for_pr() {
         result="$(python3 -c "import sys, json; print(len(json.load(sys.stdin)))" <<< "$response")"
     fi
 
-    if [ $result -eq 0 ]; then
+    if [ "$result" -eq 0 ]; then
         return 1
     fi
 
@@ -384,16 +397,16 @@ check_for_pr() {
 # 1: The conflict is not resolved or the commit is not present. Or in some other
 # undefined state
 check_if_resolved() {
-    local head_ref=${1:-}
-    local base=${2:-}
-    local newbase=${3:-}
+    local head_ref="$1"
+    local base="$2"
+    local newbase="$3"
     local commits1 commits1_num commits2 commits2_num
 
     commits1="$(git log "$newbase".."$head_ref" --oneline)"
     commits2="$(git log "$newbase".."$base" --oneline)"
 
-    commits1_num=$(printf '%s' "$commits1" | wc -l)
-    commits2_num=$(printf '%s' "$commits2" | wc -l)
+    commits1_num=$(printf '%s' "$commits1" | grep -c '.' )
+    commits2_num=$(printf '%s' "$commits2" | grep -c '.' )
 
     if [[ $commits1_num -eq $commits2_num ]]; then
         return 0
@@ -413,6 +426,7 @@ COMMIT_USER_NAME="github-actions[bot]"
 COMMIT_USER_EMAIL="github-actions[bot]@users.noreply.github.com"
 CICD_TRIGGER_RESUME=""
 REBASE_HEAD_FILE=".git/REBASE_HEAD"
+TMP_LOG_FILE="$(mktemp)"
 
 
 POSITIONAL_ARGS=()
@@ -443,20 +457,20 @@ else
     REPO_DIR="$FIRST_REPO"
 fi
 
-SUCCESSULL_REBASE_PR_TITLE="Automatic rebase of branch $FIRST_REPO_BRANCH completed successfuly"
-SUCCESSULL_REBASE_MESSAGE="
+SUCCESSFUL_REBASE_PR_TITLE="Automatic rebase of branch $FIRST_REPO_BRANCH completed successfuly"
+SUCCESSFUL_REBASE_MESSAGE="
 Summary:
 * Rebased branch $FIRST_REPO_BRANCH from repository $FIRST_REPO."
 
 if [[ -z "$LOCAL" ]]; then
-    SUCCESSULL_REBASE_MESSAGE+="
+    SUCCESSFUL_REBASE_MESSAGE+="
 * New base: $SECOND_REPO_BRANCH from repository $SECOND_REPO."
 else
-    SUCCESSULL_REBASE_MESSAGE+="
+    SUCCESSFUL_REBASE_MESSAGE+="
 * New base: $SECOND_REPO_BRANCH from repository $FIRST_REPO."
 fi
 
-SUCCESSULL_REBASE_MESSAGE+="
+SUCCESSFUL_REBASE_MESSAGE+="
 
 Please, manage the rebased branch by either merging $FIRST_REPO_BRANCH-rebased
 into $FIRST_REPO_BRANCH, force pushing branch $FIRST_REPO_BRANCH to include
@@ -476,39 +490,39 @@ if [[ "$LOCAL" != "true" && -n "$TOKEN" ]]; then
     repo_path="$(build_url_with_token "$FIRST_REPO" "$TOKEN")"
 
     echo "Cloning the first repository: $FIRST_REPO..."
-    git clone "$repo_path" "$REPO_DIR" &> /dev/null
-    cd "$REPO_DIR" &> /dev/null
-    git fetch --all &> /dev/null
-    cd - &> /dev/null
+    git clone "$repo_path" "$REPO_DIR" &> "$TMP_LOG_FILE"
+    cd "$REPO_DIR" &> "$TMP_LOG_FILE"
+    git fetch --all &> "$TMP_LOG_FILE"
+    cd - &> "$TMP_LOG_FILE"
     unset repo_path
 elif [[ "$LOCAL" != "true" ]]; then
     echo "Cloning the first repository: $FIRST_REPO..."
-    git clone "$FIRST_REPO" "$REPO_DIR" &> /dev/null
+    git clone "$FIRST_REPO" "$REPO_DIR" &> "$TMP_LOG_FILE"
 fi
 
 echo "Checking out branch '$FIRST_REPO_BRANCH'..."
-cd "$REPO_DIR" &> /dev/null
-git checkout "$FIRST_REPO_BRANCH" &> /dev/null
+cd "$REPO_DIR" &> "$TMP_LOG_FILE"
+git checkout "$FIRST_REPO_BRANCH" &> "$TMP_LOG_FILE"
 
 echo "Setting user name to $COMMIT_USER_NAME for commits..."
-git config user.name "$COMMIT_USER_NAME" &> /dev/null
+git config user.name "$COMMIT_USER_NAME" &> "$TMP_LOG_FILE"
 echo "Setting user email to $COMMIT_USER_EMAIL for commits..."
-git config user.email "$COMMIT_USER_EMAIL" &> /dev/null
+git config user.email "$COMMIT_USER_EMAIL" &> "$TMP_LOG_FILE"
 
 # Add second repo as a remote:
 if [[ "$LOCAL" != "true" && -n "$TOKEN" ]]; then
     echo "Adding second repo as a remote $SECOND_REPO..."
-    git remote add "$SECOND_REPO_REMOTE_NAME" "$SECOND_REPO" &> /dev/null
+    git remote add "$SECOND_REPO_REMOTE_NAME" "$SECOND_REPO" &> "$TMP_LOG_FILE"
     unset repo_path
 
     echo "Fetching from the second repo branch '$SECOND_REPO_BRANCH'..."
-    git fetch "$SECOND_REPO_REMOTE_NAME" "$SECOND_REPO_BRANCH" &> /dev/null
+    git fetch "$SECOND_REPO_REMOTE_NAME" "$SECOND_REPO_BRANCH" &> "$TMP_LOG_FILE"
 elif [[ "$LOCAL" != "true" ]]; then
     echo "Adding second repo as a remote $SECOND_REPO..."
-    git remote add "$SECOND_REPO_REMOTE_NAME" "$SECOND_REPO" &> /dev/null
+    git remote add "$SECOND_REPO_REMOTE_NAME" "$SECOND_REPO" &> "$TMP_LOG_FILE"
 
     echo "Fetching from the second repo '$SECOND_REPO_BRANCH'..."
-    git fetch "$SECOND_REPO_REMOTE_NAME" "$SECOND_REPO_BRANCH" &> /dev/null
+    git fetch "$SECOND_REPO_REMOTE_NAME" "$SECOND_REPO_BRANCH" &> "$TMP_LOG_FILE"
 fi
 
 ################################################################################
@@ -517,12 +531,12 @@ fi
 # Check if there is a FIRST_REPO_BRANCH-rebased branch. If yes - do not start a
 # new rebase, as the last successful rebase was not managed properly.
 if [[ "$LOCAL" != "true" ]]; then
-    BRANCH_TEMP=$(git branch -r --no-column --list "$FIRST_REPO_REMOTE_NAME"/"$FIRST_REPO_BRANCH"-rebased 2> /dev/null)
+    BRANCH_TEMP=$(git branch -r --no-column --list "$FIRST_REPO_REMOTE_NAME"/"$FIRST_REPO_BRANCH"-rebased 2> "$TMP_LOG_FILE")
 else
-    BRANCH_TEMP=$(git branch --no-column --list "$FIRST_REPO_BRANCH"-rebased 2> /dev/null)
+    BRANCH_TEMP=$(git branch --no-column --list "$FIRST_REPO_BRANCH"-rebased 2> "$TMP_LOG_FILE")
 fi
 
-if echo "$BRANCH_TEMP" | grep rebased &> /dev/null; then
+if echo "$BRANCH_TEMP" | grep rebased &> "$TMP_LOG_FILE"; then
     echo "The last successful rebase of the branch $FIRST_REPO_BRANCH is still
 present in the repository history. Please merge or delete it and restart the
 automatic rebase."
@@ -534,9 +548,9 @@ unset BRANCH_TEMP
 # consequently triggered after a manual conflict resolution rebase attempt.
 # Search for a previous branch with a conflict:
 if [[ "$LOCAL" != "true" ]]; then
-    BRANCH_TEMP=$(git branch -r --no-column --list "$FIRST_REPO_REMOTE_NAME"/"$FIRST_REPO_BRANCH"-*-conflict 2> /dev/null)
+    BRANCH_TEMP=$(git branch -r --no-column --list "$FIRST_REPO_REMOTE_NAME"/"$FIRST_REPO_BRANCH"-*-conflict 2> "$TMP_LOG_FILE")
 else
-    BRANCH_TEMP=$(git branch --no-column --list "$FIRST_REPO_BRANCH"-*-conflict 2> /dev/null)
+    BRANCH_TEMP=$(git branch --no-column --list "$FIRST_REPO_BRANCH"-*-conflict 2> "$TMP_LOG_FILE")
 fi
 
 while IFS= read -r line; do
@@ -573,19 +587,19 @@ if [[ -z "$COMMIT" && -z "$BRANCH" ]]; then
 
     echo "Rebasing '$FIRST_REPO_BRANCH' onto '$SECOND_REPO_REF'..."
     
-    if git rebase "$SECOND_REPO_REF" &> /dev/null; then
+    if git rebase "$SECOND_REPO_REF" &> "$TMP_LOG_FILE"; then
         echo "Rebase completed successfuly. No conflicts."
 
         # Do not push to the same branch on the remote repository to avoid
         # force pushes:
-        git checkout -b "$FIRST_REPO_BRANCH-rebased" "$FIRST_REPO_BRANCH" &> /dev/null
+        git checkout -b "$FIRST_REPO_BRANCH-rebased" "$FIRST_REPO_BRANCH" &> "$TMP_LOG_FILE"
         if [[ "$LOCAL" != "true" && -n "$TOKEN" ]]; then
             push_branch_remote "$TOKEN" "$FIRST_REPO_BRANCH-rebased" "$FIRST_REPO_REMOTE_NAME"
             if ! check_for_pr "$TOKEN" "$FIRST_REPO" "$FIRST_REPO_BRANCH-rebased" "$FIRST_REPO_BRANCH" ; then
-                create_pr_remote "$TOKEN" "$FIRST_REPO" "$FIRST_REPO_BRANCH-rebased" "$FIRST_REPO_BRANCH" "$SUCCESSULL_REBASE_PR_TITLE" "$SUCCESSULL_REBASE_MESSAGE" || exit 1
+                create_pr_remote "$TOKEN" "$FIRST_REPO" "$FIRST_REPO_BRANCH-rebased" "$FIRST_REPO_BRANCH" "$SUCCESSFUL_REBASE_PR_TITLE" "$SUCCESSFUL_REBASE_MESSAGE"
             fi
         else
-            echo "$SUCCESSULL_REBASE_MESSAGE"
+            echo "$SUCCESSFUL_REBASE_MESSAGE"
         fi
         exit 0
     fi
@@ -597,11 +611,11 @@ elif [[ -n "$COMMIT" && -n "$BRANCH" ]]; then
 
     echo "Continuing rebase '$FIRST_REPO_BRANCH' onto '$BRANCH' using commit $COMMIT as a base..."
     
-    if git rebase --onto "$BRANCH" "$COMMIT" "$FIRST_REPO_BRANCH" &> /dev/null; then
+    if git rebase --onto "$BRANCH" "$COMMIT" "$FIRST_REPO_BRANCH" &> "$TMP_LOG_FILE"; then
         # Delete the temporary conflict branch so there is no leftovers after a
         # success:
-        git branch --delete "$BRANCH" &> /dev/null
-        git checkout -b "$FIRST_REPO_BRANCH-rebased" "$FIRST_REPO_BRANCH" &> /dev/null
+        git branch --delete "$BRANCH" &> "$TMP_LOG_FILE"
+        git checkout -b "$FIRST_REPO_BRANCH-rebased" "$FIRST_REPO_BRANCH" &> "$TMP_LOG_FILE"
 
         if [[ "$LOCAL" != "true" && -n "$TOKEN" ]]; then
             # Delete the temporary conflict branch on remote so there is no
@@ -612,10 +626,10 @@ elif [[ -n "$COMMIT" && -n "$BRANCH" ]]; then
             # force pushes:
             push_branch_remote "$TOKEN" "$FIRST_REPO_BRANCH-rebased" "$FIRST_REPO_REMOTE_NAME"
             if ! check_for_pr "$TOKEN" "$FIRST_REPO" "$FIRST_REPO_BRANCH-rebased" "$FIRST_REPO_BRANCH" ; then
-                create_pr_remote "$TOKEN" "$FIRST_REPO" "$FIRST_REPO_BRANCH-rebased" "$FIRST_REPO_BRANCH" "$SUCCESSULL_REBASE_PR_TITLE" "$SUCCESSULL_REBASE_MESSAGE" || exit 1
+                create_pr_remote "$TOKEN" "$FIRST_REPO" "$FIRST_REPO_BRANCH-rebased" "$FIRST_REPO_BRANCH" "$SUCCESSFUL_REBASE_PR_TITLE" "$SUCCESSFUL_REBASE_MESSAGE"
             fi
         else
-            echo "$SUCCESSULL_REBASE_MESSAGE"
+            echo "$SUCCESSFUL_REBASE_MESSAGE"
         fi
 
         echo "Rebase completed successfuly. No new conflicts."
@@ -635,11 +649,11 @@ echo "Conflict detected. Inspecting rebase state..."
 
 if [[ ! -f "$REBASE_HEAD_FILE" ]]; then
     echo "ERROR: Expected .git/REBASE_HEAD not found. Cannot determine conflicting commit." >&2
-    git rebase --abort &> /dev/null
+    git rebase --abort &> "$TMP_LOG_FILE"
     exit 3
 fi
 
-CONFLICT_COMMIT=$(cat "$REBASE_HEAD_FILE" 2> /dev/null)
+CONFLICT_COMMIT=$(cat "$REBASE_HEAD_FILE" 2> "$TMP_LOG_FILE")
 
 # Build the conflict branch name: <first_repo_branch>-<hash>-conflict
 CONFLICT_BRANCH="${FIRST_REPO_BRANCH}-${CONFLICT_COMMIT}-conflict"
@@ -653,20 +667,20 @@ CONFLICT_BRANCH="${FIRST_REPO_BRANCH}-${CONFLICT_COMMIT}-conflict"
 # pushed to the branch after resolution by the developer. Hence, no need to
 # create a branch.
 if  [[ "$BRANCH" != "$CONFLICT_BRANCH" ]]; then
-    git branch "$CONFLICT_BRANCH" &> /dev/null
+    git branch "$CONFLICT_BRANCH" &> "$TMP_LOG_FILE"
     if [[ "$LOCAL" != "true" && -n "$TOKEN" ]]; then
-        push_branch_remote "$TOKEN" "$CONFLICT_BRANCH" "$FIRST_REPO_REMOTE_NAME" || exit 1
+        push_branch_remote "$TOKEN" "$CONFLICT_BRANCH" "$FIRST_REPO_REMOTE_NAME"
     fi
 
     if [[ -n "$BRANCH" ]]; then
-        git branch --delete "$BRANCH" &> /dev/null
+        git branch --delete "$BRANCH" &> "$TMP_LOG_FILE"
         if [[ "$LOCAL" != "true" && -n "$TOKEN" ]]; then
             delete_branch_remote "$TOKEN" "$BRANCH" "$FIRST_REPO_REMOTE_NAME"
         fi
     fi
 fi
 
-git rebase --abort &> /dev/null
+git rebase --abort &> "$TMP_LOG_FILE"
 
 ################################################################################
 # Opening a PR/communicating via CLI with instructions on how to proceed:
@@ -767,7 +781,7 @@ if [[ "$LOCAL" != "true" && -n "$TOKEN" ]]; then
     pr_title="Automatic rebase of branch '$FIRST_REPO_BRANCH' met a conflict."
 
     if ! check_for_pr "$TOKEN" "$FIRST_REPO" "$CONFLICT_BRANCH" "$FIRST_REPO_BRANCH" ; then
-        create_pr_remote "$TOKEN" "$FIRST_REPO" "$CONFLICT_BRANCH" "$FIRST_REPO_BRANCH" "$pr_title" "$pr_body" || exit 1
+        create_pr_remote "$TOKEN" "$FIRST_REPO" "$CONFLICT_BRANCH" "$FIRST_REPO_BRANCH" "$pr_title" "$pr_body"
     fi
 else
     echo "$message"

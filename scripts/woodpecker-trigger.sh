@@ -4,15 +4,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+trap cleanup EXIT
 set -euo pipefail
-
-# Pinned woodpecker-cli version. Override with the WOODPECKER_CLI_VERSION
-# environment variable.
-# Check https://github.com/woodpecker-ci/woodpecker/releases for available
-# versions.
-WOODPECKER_CLI_VERSION="${WOODPECKER_CLI_VERSION:-3.13.0}"
-WP_BIN=""
-WP_TMPDIR=""
 
 usage() {
     cat <<EOF
@@ -41,7 +34,7 @@ Options:
                             specified multiple times.
 
 Environment variables:
-  WOODPECKER_CLI_VERSION    woodpecker-cli version to download (default: 2.7.0)
+  WOODPECKER_CLI_VERSION    woodpecker-cli version to download (default: 3.13.0)
 
 Exit codes:
   0   Pipeline triggered successfully
@@ -126,12 +119,18 @@ download_woodpecker_cli() {
     chmod +x "$WP_BIN"
 }
 
-# Configuration and initial values:
+
+# Pinned woodpecker-cli version. Override with the WOODPECKER_CLI_VERSION
+# environment variable.
+# Check https://github.com/woodpecker-ci/woodpecker/releases for available
+# versions.
+WOODPECKER_CLI_VERSION="${WOODPECKER_CLI_VERSION:-3.13.0}"
+WP_BIN=""
+WP_TMPDIR=""
 TOKEN=""
 API_URL=""
 OWNER=""
 REPO=""
-WORKFLOW=""
 REF="main"
 INPUTS=()
 
@@ -160,10 +159,6 @@ parse_args() {
                 ;;
             -r|--repo)
                 REPO="$2"
-                shift 2
-                ;;
-            -w|--workflow)
-                WORKFLOW="$2"
                 shift 2
                 ;;
             --ref)
@@ -206,7 +201,6 @@ API_URL="${API_URL%/}"
 
 # Download woodpecker-cli and register cleanup on exit:
 download_woodpecker_cli "$WOODPECKER_CLI_VERSION"
-trap cleanup EXIT
 
 # Build the pipeline create command.
 cmd=("$WP_BIN" pipeline create "${OWNER}/${REPO}" --branch "$REF")

@@ -83,8 +83,8 @@ builder's repository contains its own Docker image.
 ### rebase
 
 This workflow automates rebasing a downstream repository branch on top of an
-upstream branch. On success, it pushes the rebased branch. If conflicts arise
-it, opens a pull request against the downstream repository to ask for
+upstream branch. On success, it pushes the rebased branch. If conflicts arise,
+it opens a pull request against the downstream repository to ask for
 resolution.
 
 | Parameter              | Type   | Req. | Def. | Description
