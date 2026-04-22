@@ -772,7 +772,10 @@ message+="
     \`\`\`
 
 5. Solve the conflict and apply the commit after solving the conflict on top of
-  the conflict branch:
+  the conflict branch. Important: if the conflict resolution resulted in an
+  empty commit or you have decided not to resolve the conflict but to drop the
+  commit - you must still add one commit to the $CONFLICT_BRANCH, even if it
+  is an empty commit. Otherwise the automated rebase will not continue.
 
     \`\`\`
     git add .
