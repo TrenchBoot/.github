@@ -63,7 +63,7 @@ jobs:
         with:
           repository: TrenchBoot/.github
           path: shared
-          ref: master
+          ref: ${{ job.workflow_sha }}
       - name: Run script for rebasing
         env:
           FIRST_REMOTE_TOKEN: ${{ secrets.first-remote-token }}

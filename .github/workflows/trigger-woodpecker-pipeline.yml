@@ -54,7 +54,7 @@ jobs:
         with:
           repository: TrenchBoot/.github
           path: shared
-          ref: master
+          ref: ${{ job.workflow_sha }}
       - name: Trigger Woodpecker CI/CD pipeline
         env:
           WOODPECKER_TOKEN: ${{ secrets.woodpecker-token }}

@@ -95,12 +95,13 @@ Options:
                     developer via the MESSAGE how to relaunch automatic rebase
                     after resolving the conflict.
   -v, --verbose     Print a lot of debug information.
+                    Note: token value will be visible in output.
 
 Conflict branch naming:
   <first_repo_branch>-<40-char-hash-of-conflicting-commit>-conflict
 
 Exit codes:
-  0   Rebase completed successfuly
+  0   Rebase completed successfully
   1   Some other issue encountered
   2   Conflict encountered (conflict branch created)
   3   Script logic failure
@@ -268,10 +269,11 @@ error_handling() {
     if [ $exit_code -ne 0 ]; then
         echo "ERROR: $BASH_COMMAND failed!" >&2
         echo -e "The logs from the last executed command:\n" >&2
-        cat "$TMP_LOG_FILE" >&2
+        [ -f "${TMP_LOG_FILE:-}" ] && cat "$TMP_LOG_FILE" >&2
     fi
 
-    rm -f "$TMP_LOG_FILE"
+    rm -f "${TMP_LOG_FILE:-}"
+    rm -rf "${WORK_DIR:-}"
 }
 
 parse_args() {
@@ -423,8 +425,8 @@ check_for_empty_commits() {
     local commits=""
     local temp=""
 
-    temp="$(git log "$base"^.."$head_ref" --format="%H %s" 2> "$TMP_LOG_FILE")"
-    while read sha msg; do
+    temp="$(git log "$base".."$head_ref" --format="%H %s" 2> "$TMP_LOG_FILE")"
+    while IFS= read -r sha msg; do
         [ -z "$(git diff-tree --no-commit-id -r "$sha" 2> "$TMP_LOG_FILE")" ] \
             && commits+="
 $sha $msg"
@@ -451,6 +453,10 @@ POSITIONAL_ARGS=()
 parse_args "$@"
 set -- "${POSITIONAL_ARGS[@]}"
 
+if [[ "${#POSITIONAL_ARGS[@]}" -lt "2" ]]; then
+    usage
+    exit 1
+fi
 FIRST_REPO="$1"
 FIRST_REPO_BRANCH="$2"
 FIRST_REPO_REMOTE_NAME="origin"
@@ -475,7 +481,7 @@ else
     REPO_DIR="$FIRST_REPO"
 fi
 
-SUCCESSFUL_REBASE_PR_TITLE="Automatic rebase of branch $FIRST_REPO_BRANCH completed successfuly"
+SUCCESSFUL_REBASE_PR_TITLE="Automatic rebase of branch $FIRST_REPO_BRANCH completed successfully"
 SUCCESSFUL_REBASE_MESSAGE="
 Summary:
 * Rebased branch $FIRST_REPO_BRANCH from repository $FIRST_REPO."
@@ -607,12 +613,12 @@ if [[ -z "$COMMIT" && -z "$BRANCH" ]]; then
     
     # The check_if_resolved() function checks whether the conflict has been
     # resolved by comparing the number of commits on the conflict branch, the
-    # default behavior of the git rebase is to drop empty commits that are ther
+    # default behavior of the git rebase is to drop empty commits that are there
     # result of rebase operation. This could mess up the check_if_resolved().
     # Hence, we better keep the empty commits on the branch but inform the
     # developer about them.
     if git rebase --empty=keep "$SECOND_REPO_REF" &> "$TMP_LOG_FILE"; then
-        echo "Rebase completed successfuly. No conflicts."
+        echo "Rebase completed successfully. No conflicts."
 
         # Do not push to the same branch on the remote repository to avoid
         # force pushes:
@@ -646,7 +652,7 @@ elif [[ -n "$COMMIT" && -n "$BRANCH" ]]; then
 
     # The check_if_resolved() function checks whether the conflict has been
     # resolved by comparing the number of commits on the conflict branch, the
-    # default behavior of the git rebase is to drop empty commits that are ther
+    # default behavior of the git rebase is to drop empty commits that are there
     # result of rebase operation. This could mess up the check_if_resolved().
     # Hence, we better keep the empty commits on the branch but inform the
     # developer about them.
@@ -679,7 +685,7 @@ You might want to drop them."
             echo "$SUCCESSFUL_REBASE_MESSAGE"
         fi
 
-        echo "Rebase completed successfuly. No new conflicts."
+        echo "Rebase completed successfully. No new conflicts."
         exit 0
     fi
 else
@@ -706,7 +712,7 @@ CONFLICT_COMMIT=$(cat "$REBASE_HEAD_FILE" 2> "$TMP_LOG_FILE")
 CONFLICT_BRANCH="${FIRST_REPO_BRANCH}-${CONFLICT_COMMIT}-conflict"
 
 
-# Create a branch at HEAD (last successfuly rebased commit) before aborting to
+# Create a branch at HEAD (last successfully rebased commit) before aborting to
 # save the current state of the rebase. Delete the previous temporary conflict
 # branch to prevent the situation that cause this script to return code 4 (see
 # the usage). If the branch that was used during the rebase has the same name as
@@ -744,7 +750,7 @@ if [[ "$LOCAL" != "true" ]]; then
 * Second repo branch : $SECOND_REPO_BRANCH"
 fi
 message+="
-* Branch with the successfuly rebased commits : $CONFLICT_BRANCH
+* Branch with the successfully rebased commits : $CONFLICT_BRANCH
 * The commit that introduced the conflict : $CONFLICT_COMMIT
 
 Before relaunching the automatic rebase, please do the following to solve the
