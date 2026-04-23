@@ -45,7 +45,7 @@ jobs:
           createrepo-c devscripts python3-docker reprepro \
           python3-pathspec mktorrent python3-lxml python3-dateutil
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: QubesOS/qubes-builderv2
           ref: 80dd898cc0472dd99f161f1d1c7c44da64de93f2

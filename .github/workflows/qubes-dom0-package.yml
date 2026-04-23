@@ -42,11 +42,11 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 100 # need history for `git format-patch`
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: TrenchBoot/.github
           path: shared
