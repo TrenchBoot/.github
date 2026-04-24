@@ -1,0 +1,244 @@
+name: Build QubesOS RPM from separate source + packaging repos
+
+# Use this when the TrenchBoot fork contains only source code, and the QubesOS
+# packaging (spec.in, patches list, .qubesbuilder, version, rel) lives in a
+# separate QubesOS/* repo. The two are combined at build time via
+# scripts/overlay-packaging.sh.
+#
+# Contrast with qubes-dom0-packagev2.yml, which expects everything to live in
+# one repo (qubes-pkg-src-dir: '.').
+
+on:
+  workflow_call:
+    inputs:
+      source-repo:
+        description: "TrenchBoot source repo, e.g. TrenchBoot/xen."
+        required: true
+        type: string
+      source-branch:
+        description: "Branch of source-repo to build (e.g. aem-next-rebased)."
+        required: true
+        type: string
+      pkg-repo:
+        description: "QubesOS packaging repo, e.g. QubesOS/qubes-vmm-xen."
+        required: true
+        type: string
+      pkg-branch:
+        description: "Branch of pkg-repo to build against. Default: main."
+        required: false
+        type: string
+        default: main
+      pkg-spec-in:
+        description: >
+          Name of the spec-in file inside pkg-repo (e.g. "xen.spec.in"). Will be
+          renamed to <qubes-component>.spec.in during overlay.
+        required: true
+        type: string
+      pkg-file-renames:
+        description: >
+          Newline-separated list of "SRC:DST" pairs, applied inside pkg-repo
+          before overlay (resolves name collisions with source tree). E.g.
+          "config:config-qubesos" for xen.
+        required: false
+        type: string
+        default: ""
+      qubes-component:
+        description: "QubesOS component name (e.g. vmm-xen, grub2)."
+        required: true
+        type: string
+      qubes-pkg-version:
+        description: "Override version (else taken from pkg-repo/version)."
+        required: false
+        type: string
+      qubes-pkg-revision:
+        description: "Override release (else defaults to 1)."
+        required: false
+        type: string
+
+jobs:
+  build-and-package:
+    runs-on: ubuntu-24.04
+    name: Compile and package RPM
+    permissions:
+      contents: write
+
+    steps:
+      - name: Install builder dependencies
+        run: |
+          sudo apt install --no-install-recommends --yes \
+            createrepo-c devscripts python3-docker reprepro \
+            python3-pathspec mktorrent python3-lxml python3-dateutil
+
+      - name: Checkout qubes-builderv2
+        uses: actions/checkout@v4
+        with:
+          repository: QubesOS/qubes-builderv2
+          ref: 80dd898cc0472dd99f161f1d1c7c44da64de93f2
+          fetch-depth: 0
+          path: qubesbuilder
+
+      - name: Checkout source repo
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.source-repo }}
+          ref: ${{ inputs.source-branch }}
+          fetch-depth: 100
+          path: qubesbuilder/plugins/fetch/tmp_clone
+
+      - name: Checkout packaging repo
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.pkg-repo }}
+          ref: ${{ inputs.pkg-branch }}
+          path: pkg
+
+      - name: Checkout shared scripts
+        uses: actions/checkout@v6
+        with:
+          repository: TrenchBoot/.github
+          path: shared
+          ref: ${{ github.job_workflow_sha || 'master' }}
+
+      - name: Cache Docker image
+        uses: actions/cache@v4
+        id: docker-cache
+        with:
+          path: /tmp/qubes-builder-fedora.tar
+          key: ${{ hashFiles('qubesbuilder/tools/*', 'qubesbuilder/dockerfiles/fedora.Dockerfile') }}-docker-container
+
+      - name: Load Docker image
+        if: steps.docker-cache.outputs.cache-hit == 'true'
+        run: docker load --input /tmp/qubes-builder-fedora.tar
+
+      - name: Build Docker image
+        if: steps.docker-cache.outputs.cache-hit != 'true'
+        working-directory: qubesbuilder
+        run: |
+          sed -i "s/RUN useradd -m user$/RUN useradd -m user -u $UID/" dockerfiles/fedora.Dockerfile
+          tools/generate-container-image.sh docker
+
+      - name: Export Docker image
+        if: steps.docker-cache.outputs.cache-hit != 'true'
+        run: docker save --output /tmp/qubes-builder-fedora.tar qubes-builder-fedora:latest
+
+      - name: Overlay packaging onto source workspace
+        env:
+          RENAMES: ${{ inputs.pkg-file-renames }}
+        run: |
+          rename_args=()
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            rename_args+=(--rename "$line")
+          done <<< "$RENAMES"
+          shared/scripts/overlay-packaging.sh \
+            --workspace qubesbuilder/plugins/fetch/tmp_clone \
+            --pkg pkg \
+            --spec-in '${{ inputs.pkg-spec-in }}' \
+            --component '${{ inputs.qubes-component }}' \
+            "${rename_args[@]}"
+
+      - name: Finalize workspace for qubes-builderv2
+        env:
+          COMPONENT: ${{ inputs.qubes-component }}
+          PKG_VER: ${{ inputs.qubes-pkg-version }}
+          PKG_REV: ${{ inputs.qubes-pkg-revision }}
+        run: |
+          clone_dir=qubesbuilder/plugins/fetch/tmp_clone
+          spec="$clone_dir/$COMPONENT.spec.in"
+
+          # qubes-builderv2 expects the source tarball to be named
+          # <name>-<version>.tar.gz; force Source0 to match.
+          sed -i '/^Source0:/s|\t.*|\t%{name}-%{version}.tar.gz|' "$spec"
+
+          if [ -n "$PKG_REV" ]; then
+            echo "$PKG_REV" > "$clone_dir/rel"
+          elif [ ! -f "$clone_dir/rel" ]; then
+            echo "1" > "$clone_dir/rel"
+          fi
+
+          if [ -n "$PKG_VER" ]; then
+            echo "$PKG_VER" > "$clone_dir/version"
+          fi
+
+          cat > "$clone_dir/.qubesbuilder" <<EOF
+          host:
+            rpm:
+              build:
+              - $COMPONENT.spec
+          EOF
+
+          git -C "$clone_dir" \
+            -c user.name=ci -c user.email=ci@local \
+            add -A
+          git -C "$clone_dir" \
+            -c user.name=ci -c user.email=ci@local \
+            commit --no-gpg-sign -m "Overlay packaging and builder metadata for $COMPONENT"
+
+          echo "::group::version"
+          cat "$clone_dir/version"
+          echo "::endgroup::"
+          echo "::group::$COMPONENT.spec.in"
+          cat "$spec"
+          echo "::endgroup::"
+          echo "::group::.qubesbuilder"
+          cat "$clone_dir/.qubesbuilder"
+          echo "::endgroup::"
+
+      - name: Configure builder.yml
+        working-directory: qubesbuilder
+        env:
+          COMPONENT: ${{ inputs.qubes-component }}
+          BRANCH: ${{ inputs.source-branch }}
+        run: |
+          cp example-configs/qubes-os-r4.2.yml builder.yml
+          # Switch from Qubes to Docker executor.
+          sed -i "/^executor:$/,+4d; /^#executor:$/,+3s/#//" builder.yml
+
+          # Add our component (remove any pre-existing entry with the same name).
+          sed -i "/^  - $COMPONENT$/d" builder.yml
+          sed -i "/^  - $COMPONENT:$/c\ \ - does_not_exist:" builder.yml
+          sed -i "/^components:/a\  - $COMPONENT:" builder.yml
+          sed -i "/^  - $COMPONENT:/a\      verification-mode: insecure-skip-checking" builder.yml
+          sed -i "/^  - $COMPONENT:/a\      branch: $BRANCH" builder.yml
+          sed -i "/^  - $COMPONENT:/a\      url: /builder/plugins/fetch/tmp_clone" builder.yml
+
+          echo "::group::builder.yml"
+          cat builder.yml
+          echo "::endgroup::"
+
+      - name: Build and package
+        working-directory: qubesbuilder
+        env:
+          DEBUG: ${{ runner.debug == 1 && '--debug --verbose' || '' }}
+        run: |
+          ./qb $DEBUG -c ${{ inputs.qubes-component }} package fetch prep build
+          mapfile -t rpms < <(find "artifacts/components/${{ inputs.qubes-component }}/" -regex ".*/build/rpm/[^/]*.rpm")
+          cp --verbose "${rpms[@]}" "$GITHUB_WORKSPACE/"
+
+      - name: Save built packages
+        uses: actions/upload-artifact@v4
+        with:
+          if-no-files-found: error
+          name: qubesos.dom0.fc37-${{ inputs.qubes-component }}-${{ github.sha }}
+          path: '*.rpm'
+
+      - name: Construct release description
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        run: |
+          for artifact in *.rpm; do
+            echo "### $artifact" >> release-body.md
+            echo '```' >> release-body.md
+            echo "wget --quiet '${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}/$artifact'" >> release-body.md
+            echo '```' >> release-body.md
+            echo '```' >> release-body.md
+            echo "curl --remote-name '${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}/$artifact'" >> release-body.md
+            echo '```' >> release-body.md
+          done
+
+      - name: Create release for a new tag
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        uses: ncipollo/release-action@v1.14.0
+        with:
+          artifacts: '*.rpm'
+          artifactErrorsFailBuild: true
+          bodyFile: release-body.md

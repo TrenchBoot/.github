@@ -1,0 +1,168 @@
+name: Rebase and publish a QubesOS-derivative TrenchBoot component
+
+# End-to-end pipeline for TrenchBoot forks that carry source code on top of a
+# QubesOS packaging repo (xen on qubes-vmm-xen, grub on qubes-grub2, ...).
+#
+#   prep-rebase    synthesize (upstream_tag + qubes_patches) as the rebase base
+#   try-rebase     rebase the TrenchBoot downstream branch onto that base
+#   cleanup        delete the synthesized branch from the remote
+#   build-rpm      merge packaging onto the rebased source and build via
+#                  qubes-builderv2 (skipped when dry-run: true)
+#   trigger-wp     kick off Woodpecker sign-and-publish (skipped when dry-run)
+#
+# The per-component caller only supplies a dozen strings. Prep and overlay
+# logic live in scripts/prep-qubes-rebase.sh and scripts/overlay-packaging.sh
+# in this repo, both runnable locally via scripts/test-pipeline.sh.
+
+on:
+  workflow_call:
+    inputs:
+      source-repo:
+        description: "TrenchBoot fork, e.g. TrenchBoot/xen."
+        type: string
+        required: true
+      downstream-branch:
+        description: "Branch of source-repo to rebase (e.g. aem-next)."
+        type: string
+        required: true
+      pkg-repo:
+        description: "QubesOS packaging repo, e.g. QubesOS/qubes-vmm-xen."
+        type: string
+        required: true
+      upstream-url:
+        description: "HTTPS URL of the upstream source (xenbits, gnu-grub, ...)."
+        type: string
+        required: true
+      upstream-tag-format:
+        description: >
+          printf-style format for the upstream tag. Single '%s' placeholder is
+          replaced with the version read from <pkg-repo>/version. Examples:
+          'RELEASE-%s' (xen), 'grub-%s' (grub2).
+        type: string
+        required: true
+      pkg-spec-in:
+        description: "Spec-in filename inside pkg-repo (e.g. xen.spec.in)."
+        type: string
+        required: true
+      qubes-component:
+        description: "QubesOS component name (e.g. vmm-xen, grub2)."
+        type: string
+        required: true
+      pkg-file-renames:
+        description: >
+          Newline-separated "SRC:DST" pairs applied inside pkg-repo before the
+          build overlay, to resolve collisions with the source tree (e.g.
+          "config:config-qubesos" for xen). Empty if no renames needed.
+        type: string
+        required: false
+        default: ""
+      dry-run:
+        description: "Skip build and publish (rebase only)."
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      rebase-token:
+        description: PAT with repo write for source-repo (push, delete branches, open PRs).
+        required: true
+      woodpecker-token:
+        description: Woodpecker API token for triggering sign-and-publish.
+        required: true
+
+jobs:
+  prep-rebase:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version:        ${{ steps.prep.outputs.version }}
+      prep-branch:    ${{ steps.prep.outputs.prep-branch }}
+      component-slug: ${{ steps.prep.outputs.component-slug }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: TrenchBoot/.github
+          path: shared
+          ref: ${{ github.job_workflow_sha || 'master' }}
+      - id: prep
+        env:
+          TOKEN: ${{ secrets.rebase-token }}
+        run: |
+          pkg_slug=$(basename '${{ inputs.pkg-repo }}')
+          component_slug=$(basename '${{ inputs.source-repo }}')
+          prep_branch="${pkg_slug}-with-patches-rebase-prep"
+          shared/scripts/prep-qubes-rebase.sh \
+            --work-dir work \
+            --source-repo "https://github.com/${{ inputs.source-repo }}.git" \
+            --source-token "$TOKEN" \
+            --pkg-repo "https://github.com/${{ inputs.pkg-repo }}.git" \
+            --upstream-url '${{ inputs.upstream-url }}' \
+            --upstream-tag-format '${{ inputs.upstream-tag-format }}' \
+            --spec-in '${{ inputs.pkg-spec-in }}' \
+            --prep-branch "$prep_branch" \
+            --push
+          {
+            echo "version=$(cat work/pkg/version)"
+            echo "prep-branch=$prep_branch"
+            echo "component-slug=$component_slug"
+          } >> "$GITHUB_OUTPUT"
+
+  try-rebase:
+    needs: prep-rebase
+    uses: TrenchBoot/.github/.github/workflows/rebase.yml@v1
+    secrets:
+      first-remote-token: ${{ secrets.rebase-token }}
+    permissions:
+      contents: write
+    with:
+      downstream-repo:   https://github.com/${{ inputs.source-repo }}.git
+      downstream-branch: ${{ inputs.downstream-branch }}
+      upstream-repo:     https://github.com/${{ inputs.source-repo }}.git
+      upstream-branch:   ${{ needs.prep-rebase.outputs.prep-branch }}
+      commit-user-name:  'github-actions[bot]'
+      commit-user-email: 'github-actions[bot]@users.noreply.github.com'
+      cicd-trigger-resume: '7. Rerun https://github.com/${{ inputs.source-repo }}/actions/runs/${{ github.run_id }} to resume automated rebase.'
+
+  cleanup-after-rebase-attempt:
+    needs: [prep-rebase, try-rebase]
+    if: always() && needs.prep-rebase.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - env:
+          TOKEN:  ${{ secrets.rebase-token }}
+          BRANCH: ${{ needs.prep-rebase.outputs.prep-branch }}
+        run: |
+          git push "https://${TOKEN}@github.com/${{ inputs.source-repo }}.git" \
+            --delete "$BRANCH"
+
+  build-rpm:
+    needs: [prep-rebase, try-rebase]
+    if: ${{ !inputs.dry-run }}
+    uses: TrenchBoot/.github/.github/workflows/qubes-dom0-package-dual-source.yml@v1
+    with:
+      source-repo:       ${{ inputs.source-repo }}
+      source-branch:     ${{ inputs.downstream-branch }}-rebased
+      pkg-repo:          ${{ inputs.pkg-repo }}
+      pkg-spec-in:       ${{ inputs.pkg-spec-in }}
+      pkg-file-renames:  ${{ inputs.pkg-file-renames }}
+      qubes-component:   ${{ inputs.qubes-component }}
+      qubes-pkg-version: ${{ needs.prep-rebase.outputs.version }}
+
+  trigger-woodpecker-cicd:
+    needs: [prep-rebase, build-rpm]
+    uses: TrenchBoot/.github/.github/workflows/trigger-woodpecker-pipeline.yml@v1
+    secrets:
+      woodpecker-token: ${{ secrets.woodpecker-token }}
+    with:
+      api-url: 'https://ci.3mdeb.com'
+      owner:   'zarhus'
+      repo:    'trenchboot-release-cicd-pipeline'
+      ref:     'master'
+      inputs: >-
+        --input GITHUB_REPO=${{ needs.prep-rebase.outputs.component-slug }}
+        --input GITHUB_SHA=${{ github.sha }}
+        --input GITHUB_RUN_ID=${{ github.run_id }}
+        --input QUBES_COMPONENT=${{ inputs.qubes-component }}
+        --input WORKFLOW=sign-and-publish-test-rpms
