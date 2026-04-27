@@ -50,14 +50,22 @@ on:
           rebase.sh script.
         required: true
         type: string
+    outputs:
+      rebase-exit-code:
+        description: >
+          Exit code returned by the rebase.sh script. See the script's --help
+          output for the meaning of each code.
+        value: ${{ jobs.rebase-attempt.outputs.rebase-exit-code }}
 
 jobs:
-  build-and-package:
+  rebase-attempt:
     runs-on: ubuntu-latest
     name: Try rebasing on updated upstream, report in case of conflicts
     permissions:
       # For creation/deletion/pushing to branches and creating PRs
       contents: write
+    outputs:
+      rebase-exit-code: ${{ steps.rebase.outputs.exit-code }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -65,6 +73,7 @@ jobs:
           path: shared
           ref: ${{ job.workflow_sha }}
       - name: Run script for rebasing
+        id: rebase
         env:
           FIRST_REMOTE_TOKEN: ${{ secrets.first-remote-token }}
           DOWNSTREAM_REPO: ${{ inputs.downstream-repo }}
@@ -75,6 +84,7 @@ jobs:
           EMAIL: ${{ inputs.commit-user-email }}
           MESSAGE: ${{ inputs.cicd-trigger-resume }}
         run: |
+          set +e
           shared/scripts/rebase.sh --first-remote-token "$FIRST_REMOTE_TOKEN" \
           --commit-user-name "$NAME" \
           --commit-user-email "$EMAIL" \
@@ -83,3 +93,12 @@ jobs:
           "$DOWNSTREAM_BRANCH" \
           "$UPSTREAM_REPO" \
           "$UPSTREAM_BRANCH"
+          rc=$?
+          echo "exit-code=${rc}" >> "$GITHUB_OUTPUT"
+          # The "No rebase needed" return code should be considered a success
+          # here, as we do not want to show that a job has failed in that case
+          # to avoid drawing attention of maintainers.
+          if [ "$rc" -eq "5" ]; then
+              exit "0"
+          fi
+          exit "${rc}"
