@@ -50,6 +50,12 @@ on:
           rebase.sh script.
         required: true
         type: string
+      skip-commits:
+        description: >
+          N parameter for --skip option of the rebase.sh script.
+        required: false
+        type: string
+        default: '0'
     outputs:
       rebase-exit-code:
         description: >
@@ -83,12 +89,14 @@ jobs:
           NAME: ${{ inputs.commit-user-name }}
           EMAIL: ${{ inputs.commit-user-email }}
           MESSAGE: ${{ inputs.cicd-trigger-resume }}
+          SKIP_COMMITS: ${{ inputs.skip-commits }}
         run: |
           set +e
           shared/scripts/rebase.sh --first-remote-token "$FIRST_REMOTE_TOKEN" \
           --commit-user-name "$NAME" \
           --commit-user-email "$EMAIL" \
           --cicd-trigger-resume "$MESSAGE" \
+          --skip "$SKIP_COMMITS" \
           "$DOWNSTREAM_REPO" \
           "$DOWNSTREAM_BRANCH" \
           "$UPSTREAM_REPO" \

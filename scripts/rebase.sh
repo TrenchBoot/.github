@@ -65,6 +65,12 @@ Options:
   -h, --help        Show this help message and exit
   -l, --local       Treat the <first_repo> as local directory path and
                     skips <second_repo>.
+  -s, --skip N      Skip the first N commits of <first_repo_branch> that come
+                    after the common ancestor with <second_repo_branch>. The
+                    skipped commits are dropped from the rebase result entirely.
+                    The same value must be passed on every continuation run,
+                    otherwise the conflict-resolution check will not be able to
+                    determine whether the conflict was resolved correctly.
   --first-remote-token TOKEN
                     Access token for the user to access the first repository on
                     the remote.
@@ -291,6 +297,10 @@ parse_args() {
         LOCAL="true"
         shift
         ;;
+      -s|--skip)
+        SKIP="$2"
+        shift 2
+        ;;
       --first-remote-token)
         TOKEN="$2"
         shift 2
@@ -397,15 +407,26 @@ check_for_pr() {
 # resolved conflict is present on the conflict branch. Return codes:
 # 0: The conflict is resolved and the commit is present.
 # 1: The conflict is not resolved or the commit is not present. Or in some other
-# undefined state
+# undefined state.
+#
+# The optional 4th argument is the hash of the last commit that was skipped
+# during the initial rebase (i.e., the N-th commit after the common ancestor on
+# the first_repo_branch). When provided, the count of "original" commits is
+# taken from after this commit instead of from the new base, because the first
+# N commits of the original branch never get replayed onto the conflict branch.
 check_if_resolved() {
     local head_ref="$1"
     local base="$2"
     local newbase="$3"
+    local skip_commit="${4:-}"
     local commits1 commits1_num commits2 commits2_num
 
     commits1="$(git log "$newbase".."$head_ref" --oneline)"
-    commits2="$(git log "$newbase".."$base" --oneline)"
+    if [[ -n "$skip_commit" ]]; then
+        commits2="$(git log "$skip_commit".."$base" --oneline)"
+    else
+        commits2="$(git log "$newbase".."$base" --oneline)"
+    fi
 
     commits1_num=$(printf '%s' "$commits1" | grep -c '.' )
     commits2_num=$(printf '%s' "$commits2" | grep -c '.' )
@@ -442,11 +463,14 @@ LOCAL=""
 TOKEN=""
 BRANCH=""
 COMMIT=""
+SKIP="0"
+SKIP_COMMIT=""
 COMMIT_USER_NAME="github-actions[bot]"
 COMMIT_USER_EMAIL="github-actions[bot]@users.noreply.github.com"
 CICD_TRIGGER_RESUME=""
 REBASE_HEAD_FILE=".git/REBASE_HEAD"
 TMP_LOG_FILE="$(mktemp)"
+ALL_ARGS="$@"
 
 
 POSITIONAL_ARGS=()
@@ -550,6 +574,25 @@ elif [[ "$LOCAL" != "true" ]]; then
 fi
 
 ################################################################################
+# Resolve the commit at which the rebase should actually start (skip support)
+################################################################################
+# When --skip N is provided, the first N commits of FIRST_REPO_BRANCH after the
+# common ancestor with SECOND_REPO_REF are dropped from the rebase entirely. We
+# resolve the N-th commit here (the *last* commit that gets skipped) so it can
+# be used as the rebase upstream and as a lower bound for check_if_resolved().
+if [[ "$SKIP" -gt 0 ]]; then
+    MERGE_BASE="$(git merge-base "$FIRST_REPO_BRANCH" "$SECOND_REPO_REF" 2> "$TMP_LOG_FILE")"
+    SKIP_COMMIT="$(git rev-list --reverse "$MERGE_BASE..$FIRST_REPO_BRANCH" 2> "$TMP_LOG_FILE" | sed -n "${SKIP}p")"
+
+    if [[ -z "$SKIP_COMMIT" ]]; then
+        echo "ERROR: --skip $SKIP requested but '$FIRST_REPO_BRANCH' has fewer than $SKIP commits after the common ancestor with '$SECOND_REPO_REF'." >&2
+        exit 1
+    fi
+
+    echo "Skipping the first $SKIP commit(s) after the common ancestor. Last skipped commit: $SKIP_COMMIT"
+fi
+
+################################################################################
 # Rebasing decision logic
 ################################################################################
 # Check if there is a FIRST_REPO_BRANCH-rebased branch. If yes - do not start a
@@ -609,15 +652,22 @@ if [[ -z "$COMMIT" && -z "$BRANCH" ]]; then
         exit 5
     fi
 
-    echo "Rebasing '$FIRST_REPO_BRANCH' onto '$SECOND_REPO_REF'..."
-    
     # The check_if_resolved() function checks whether the conflict has been
     # resolved by comparing the number of commits on the conflict branch, the
     # default behavior of the git rebase is to drop empty commits that are there
     # result of rebase operation. This could mess up the check_if_resolved().
     # Hence, we better keep the empty commits on the branch but inform the
     # developer about them.
-    if git rebase --empty=keep "$SECOND_REPO_REF" &> "$TMP_LOG_FILE"; then
+    #
+    # When --skip N is in effect, we use `--onto SECOND_REPO_REF SKIP_COMMIT
+    # FIRST_REPO_BRANCH` so that commits in MERGE_BASE..SKIP_COMMIT are excluded
+    # from the rebase. Without --skip we fall back to the plain form.
+    if [[ -n "$SKIP_COMMIT" ]]; then
+        rebase_cmd=(git rebase --empty=keep --onto "$SECOND_REPO_REF" "$SKIP_COMMIT" "$FIRST_REPO_BRANCH")
+    else
+        rebase_cmd=(git rebase --empty=keep "$SECOND_REPO_REF")
+    fi
+    if "${rebase_cmd[@]}" &> "$TMP_LOG_FILE"; then
         echo "Rebase completed successfully. No conflicts."
 
         # Do not push to the same branch on the remote repository to avoid
@@ -643,7 +693,7 @@ You might want to drop them."
         exit 0
     fi
 elif [[ -n "$COMMIT" && -n "$BRANCH" ]]; then
-    if ! check_if_resolved "$BRANCH" "$COMMIT" "$SECOND_REPO_REF"; then
+    if ! check_if_resolved "$BRANCH" "$COMMIT" "$SECOND_REPO_REF" "$SKIP_COMMIT"; then
         echo "ERROR: still a conflict." >&2
         exit 2
     fi
@@ -825,9 +875,9 @@ message+="
     git cherry-pick --continue
 
 5. Try to do the rebase with this script again and wait either for a new
-  conflict or for the rebase to be finished, e.g.:
+  conflict or for the rebase to be finished:
 
-    ./rebase.sh --local $REPO_DIR $FIRST_REPO_BRANCH $SECOND_REPO_BRANCH
+    $(basename "$0") $ALL_ARGS
 "
 fi
 
