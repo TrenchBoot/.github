@@ -98,22 +98,6 @@ resolution.
 | `cicd-trigger-resume`  | string | Yes  | -    | Human-readable message appended to the conflict PR describing how to resume the pipeline (`--cicd-trigger-resume` option of `rebase.sh`).
 | `first-remote-token`   | string | Yes  | -    | Personal access token with permissions to fetch, branch, commit, push, and open/close PRs on `downstream-repo`. Passed as a GitHub Actions secret.
 
-### trigger-woodpecker-pipeline
-
-This workflow is a generic wrapper for the woodpecker-trigger.sh script for
-triggering Woodpecker CI/CD pipelines on some remote Woodpecker instance. As for
-now it is used only for triggering the pipelines for signing RPM packages built
-by the `qubes-dom0-package` and `qubes-dom0-packagev2` workflows.
-
-| Parameter           | Type   | Req. | Def.     | Description
-| ---------           | ----   | ---- | ----     | -----------
-| `api-url`           | string | Yes  | -        | Base URL of the Woodpecker instance, e.g. `https://ci.example.com`.
-| `owner`             | string | Yes  | -        | Repository owner (user or organization).
-| `repo`              | string | Yes  | -        | Repository name.
-| `ref`               | string | No   | `main`   | Branch to trigger the pipeline on.
-| `inputs`            | string | No   | -        | Additional `--input KEY=VALUE` flags passed to `woodpecker-trigger.sh`. Keys must be valid shell variable names (no hyphens).
-| `woodpecker-token`  | string | Yes  | -        | Woodpecker API token for authentication. Passed as a GitHub Actions secret.
-
 ## Usage
 
 Full details can be found in [GitHub's documentation][workflow-docs] on
@@ -209,58 +193,6 @@ jobs:
       commit-user-email: 'github-actions[bot]@users.noreply.github.com'
       cicd-trigger-resume: '7. Rerun the workflow https://github.com/DaniilKl/qubes-antievilmaid/actions/runs/${{ github.run_id }} to resume automated rebase.'
 ```
-
-### trigger-woodpecker-pipeline
-
-`trigger-woodpecker-pipeline` is meant to be added as an additional job to an
-existing workflow, chained after a `qubes-dom0-package` or `qubes-dom0-packagev2`
-job.
-
-#### Workflow invocation
-
-An example invocation:
-
-```yaml
-jobs:
-  qubes-dom0-package:
-    needs: get-version
-    uses: TrenchBoot/.github/.github/workflows/qubes-dom0-packagev2.yml@master
-    with:
-      qubes-component: 'vmm-xen'
-      qubes-component-branch: 'aem-next-rebased'
-      qubes-pkg-src-dir: '.'
-      qubes-pkg-version: '4.19.4'
-  trigger-woodpecker-cicd:
-    needs: qubes-dom0-package
-    uses: TrenchBoot/.github/.github/workflows/trigger-woodpecker-pipeline.yml@master
-    secrets:
-      woodpecker-token: ${{ secrets.WOODPECKER_TOKEN }}
-    with:
-      api-url: 'https://ci.3mdeb.com'
-      owner:   'zarhus'
-      repo:    'trenchboot-release-cicd-pipeline'
-      ref:     'master'
-      inputs: >-
-        --input GITHUB_REPO=xen
-        --input GITHUB_SHA=${{ github.sha }}
-        --input GITHUB_RUN_ID=${{ github.run_id }}
-        --input QUBES_COMPONENT=vmm-xen
-        --input WORKFLOW=sign-and-publish-test-rpms
-```
-
-Invokes the workflow from `master` branch of this repository after the
-`qubes-dom0-package` job completes.  Pass the Woodpecker API token from the
-repository's GitHub secrets, point it at the target Woodpecker instance
-and repository, and supply any pipeline-specific key/value pairs via repeated
-`--input` flags.
-
-Note, that all the inputs to the `trigger-woodpecker-pipeline.yml` except from
-the `inputs` serve for the purpose of connection to the desired Woodpecker
-instance on which a pipeline for signing is running. But the data provided via
-`inputs` input and `--input` flag is consumed by the signing pipeline itself.
-One must specify the name of the signing pipeline via `--input WORKFLOW=` and
-all the input data the specified pipeline requires. The above example presents
-the required inputs for the `sign-and-publish-test-rpms` pipeline.
 
 ## Funding
 
