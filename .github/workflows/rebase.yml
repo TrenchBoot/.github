@@ -56,6 +56,12 @@ on:
         required: false
         type: string
         default: '0'
+      additional-params:
+        description: >
+          Additional parameters for the rebase.sh script.
+        required: false
+        type: string
+        default: ''
     outputs:
       rebase-exit-code:
         description: >
@@ -90,6 +96,7 @@ jobs:
           EMAIL: ${{ inputs.commit-user-email }}
           MESSAGE: ${{ inputs.cicd-trigger-resume }}
           SKIP_COMMITS: ${{ inputs.skip-commits }}
+          ADDITIONAL_PARAMS: ${{ inputs.additional-params }}
         run: |
           set +e
           shared/scripts/rebase.sh --first-remote-token "$FIRST_REMOTE_TOKEN" \
@@ -100,7 +107,8 @@ jobs:
           "$DOWNSTREAM_REPO" \
           "$DOWNSTREAM_BRANCH" \
           "$UPSTREAM_REPO" \
-          "$UPSTREAM_BRANCH"
+          "$UPSTREAM_BRANCH" \
+          "$ADDITIONAL_PARAMS"
           rc=$?
           echo "exit-code=${rc}" >> "$GITHUB_OUTPUT"
           # The "No rebase needed" return code should be considered a success
