@@ -102,6 +102,9 @@ Options:
                     after resolving the conflict.
   -v, --verbose     Print a lot of debug information.
                     Note: token value will be visible in output.
+  --use-commit-as-base
+                    Use commit hash instead of branch name in the new base
+                    PR report.
 
 Conflict branch naming:
   <first_repo_branch>-<40-char-hash-of-conflicting-commit>-conflict
@@ -317,6 +320,10 @@ parse_args() {
         CICD_TRIGGER_RESUME="$2"
         shift 2
         ;;
+      --use-commit-as-base)
+        USE_COMMIT_AS_BASE="true"
+        shift 1
+        ;;
       -*)
         echo "ERROR: Unknown option $1" >&2
         usage
@@ -503,6 +510,7 @@ SKIP_COMMIT=""
 COMMIT_USER_NAME="github-actions[bot]"
 COMMIT_USER_EMAIL="github-actions[bot]@users.noreply.github.com"
 CICD_TRIGGER_RESUME=""
+USE_COMMIT_AS_BASE=""
 REBASE_HEAD_FILE=".git/REBASE_HEAD"
 TMP_LOG_FILE="$(mktemp)"
 ALL_ARGS="$@"
@@ -530,22 +538,6 @@ if [[ -z "$LOCAL" ]]; then
     SECOND_REPO_REF="$SECOND_REPO_REMOTE_NAME/$SECOND_REPO_BRANCH"
     WORK_DIR=$(mktemp -d)
     REPO_DIR="$WORK_DIR/repo"
-    first_repo_branch="$(construct_branch_url "$FIRST_REPO" "$FIRST_REPO_BRANCH")"
-    second_repo_branch="$(construct_branch_url "$SECOND_REPO" "$SECOND_REPO_BRANCH")"
-    rebased_branch="$(construct_branch_url "$FIRST_REPO" "$FIRST_REPO_BRANCH-rebased")"
-
-    SUCCESSFUL_REBASE_PR_TITLE="Automatic rebase of branch '$FIRST_REPO_BRANCH' completed successfully"
-    SUCCESSFUL_REBASE_MESSAGE="Summary:
-* Rebased branch [$FIRST_REPO_BRANCH]($first_repo_branch) from repository $FIRST_REPO.
-* New base: [$SECOND_REPO_BRANCH]($second_repo_branch) from repository $SECOND_REPO.
-
-Please, manage the rebased branch by either merging [$FIRST_REPO_BRANCH-rebased]($rebased_branch) into [$FIRST_REPO_BRANCH]($first_repo_branch), force pushing branch [$FIRST_REPO_BRANCH]($first_repo_branch) to include commits from [$FIRST_REPO_BRANCH-rebased]($rebased_branch), or any other way suitable for this repository.
-
-Delete the branch [$FIRST_REPO_BRANCH-rebased]($rebased_branch) after you are done.
-"
-    unset first_repo_branch
-    unset second_repo_branch
-    unset rebased_branch
 else
     if [[ "${#POSITIONAL_ARGS[@]}" -ne "3" ]]; then
         usage
@@ -554,17 +546,6 @@ else
     SECOND_REPO_BRANCH="$3"
     SECOND_REPO_REF="$SECOND_REPO_BRANCH"
     REPO_DIR="$FIRST_REPO"
-    SUCCESSFUL_REBASE_MESSAGE="Summary:
-* Rebased branch '$FIRST_REPO_BRANCH'.
-* New base: '$SECOND_REPO_BRANCH'.
-
-Please, manage the rebased branch by either merging '$FIRST_REPO_BRANCH-rebased'
-into '$FIRST_REPO_BRANCH', force pushing branch '$FIRST_REPO_BRANCH' to include
-commits from '$FIRST_REPO_BRANCH-rebased', or any other way suitable for this
-repository.
-
-Delete the branch '$FIRST_REPO_BRANCH-rebased' after you are done.
-"
 fi
 
 echo "Working directory: $REPO_DIR"
@@ -610,6 +591,50 @@ elif [[ "$LOCAL" != "true" ]]; then
 
     echo "Fetching from the second repo '$SECOND_REPO_BRANCH'..."
     git fetch "$SECOND_REPO_REMOTE_NAME" "$SECOND_REPO_BRANCH" &> "$TMP_LOG_FILE"
+fi
+
+################################################################################
+# Set up successful rebase messages (This requires the "Repositories
+# preparation" step).
+################################################################################
+if [[ -z "$LOCAL" ]]; then
+    first_repo_branch="$(construct_branch_url "$FIRST_REPO" "$FIRST_REPO_BRANCH")"
+    second_repo_branch="$(construct_branch_url "$SECOND_REPO" "$SECOND_REPO_BRANCH")"
+    rebased_branch="$(construct_branch_url "$FIRST_REPO" "$FIRST_REPO_BRANCH-rebased")"
+
+    SUCCESSFUL_REBASE_PR_TITLE="Automatic rebase of branch '$FIRST_REPO_BRANCH' completed successfully"
+    SUCCESSFUL_REBASE_MESSAGE="Summary:
+* Rebased branch [$FIRST_REPO_BRANCH]($first_repo_branch) from repository $FIRST_REPO."
+    if [[ -n "$USE_COMMIT_AS_BASE" ]]; then
+        new_base_commit="$(git rev-parse "$SECOND_REPO_REF")"
+        SUCCESSFUL_REBASE_MESSAGE+="
+* New base: $new_base_commit from repository $SECOND_REPO."
+    else
+        SUCCESSFUL_REBASE_MESSAGE+="
+* New base: [$SECOND_REPO_BRANCH]($second_repo_branch) from repository $SECOND_REPO."
+    fi
+    SUCCESSFUL_REBASE_MESSAGE+="
+
+Please, manage the rebased branch by either merging [$FIRST_REPO_BRANCH-rebased]($rebased_branch) into [$FIRST_REPO_BRANCH]($first_repo_branch), force pushing branch [$FIRST_REPO_BRANCH]($first_repo_branch) to include commits from [$FIRST_REPO_BRANCH-rebased]($rebased_branch), or any other way suitable for this repository.
+
+Delete the branch [$FIRST_REPO_BRANCH-rebased]($rebased_branch) after you are done.
+"
+    unset first_repo_branch
+    unset second_repo_branch
+    unset rebased_branch
+    unset new_base_commit
+else
+    SUCCESSFUL_REBASE_MESSAGE="Summary:
+* Rebased branch '$FIRST_REPO_BRANCH'.
+* New base: '$SECOND_REPO_BRANCH'.
+
+Please, manage the rebased branch by either merging '$FIRST_REPO_BRANCH-rebased'
+into '$FIRST_REPO_BRANCH', force pushing branch '$FIRST_REPO_BRANCH' to include
+commits from '$FIRST_REPO_BRANCH-rebased', or any other way suitable for this
+repository.
+
+Delete the branch '$FIRST_REPO_BRANCH-rebased' after you are done.
+"
 fi
 
 ################################################################################
@@ -846,7 +871,18 @@ if [[ "$LOCAL" != "true" && -n "$TOKEN" ]]; then
 * First repo: $FIRST_REPO
 * First repo branch: [$FIRST_REPO_BRANCH]($first_repo_branch)
 * Second repo: $SECOND_REPO
-* Second repo branch: [$SECOND_REPO_BRANCH]($second_repo_branch)
+"
+
+    if [[ -n "$USE_COMMIT_AS_BASE" ]]; then
+        new_base_commit="$(git rev-parse "$SECOND_REPO_REF")"
+        message+="
+* Second repo commit: \`$new_base_commit\`"
+    else
+        message+="
+* Second repo branch: [$SECOND_REPO_BRANCH]($second_repo_branch)"
+    fi
+
+    message+="
 * Branch with the successfully rebased commits: [$CONFLICT_BRANCH]($conflict_branch)
 * The commit that introduced the conflict: \`$CONFLICT_COMMIT\`
 
@@ -902,6 +938,7 @@ If you want to start the automatic rebase from the beginning, then make sure to:
     unset first_repo_branch
     unset second_repo_branch
     unset conflict_branch
+    unset new_base_commit
 
     pr_body="$message"
     pr_title="Automatic rebase of branch '$FIRST_REPO_BRANCH' met a conflict."
