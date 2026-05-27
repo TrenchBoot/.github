@@ -403,6 +403,41 @@ check_for_pr() {
     return 0
 }
 
+
+# This function takes a GitHub repository HTTPS URL and converts it to GitHub
+# SSH url format. Return codes:
+# 0: Success. The function STDOUT contains the url in SSH format.
+# 1: The URL is not a valid HTTPS url. The STDOUT is empty.
+# 2: The URL is not a valid GitHub HTTPS repo url. The STDOUT is empty.
+convert_https_to_ssh() {
+    local url="$1"
+
+    if [[ ! "$url" =~ ^https?://[^[:space:]]+$ ]]; then
+        return 1
+    fi
+
+    if [[ ! "$url" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/?$ ]]; then
+        return 2
+    fi
+
+    echo "$url" | sed -E -e 's#^https://github\.com/#git@github.com:#' -e 's#/?(\.git)?/?$#.git#'
+}
+
+# Construct a URL to a branch on some git remote service using repo URL as a
+# first argument and the branch name as a second argument. Return codes:
+# 0: Success.
+# 1: Error.
+construct_branch_url() {
+    local repo="$1"
+    local branch="$2"
+
+    # Currently only GitHub is supported:
+    repo="${repo%.git}"
+    echo "$repo/tree/$branch" && return 0
+
+    return 1
+}
+
 # This function checks if conflict has been resolved and the commit with the
 # resolved conflict is present on the conflict branch. Return codes:
 # 0: The conflict is resolved and the commit is present.
@@ -495,6 +530,22 @@ if [[ -z "$LOCAL" ]]; then
     SECOND_REPO_REF="$SECOND_REPO_REMOTE_NAME/$SECOND_REPO_BRANCH"
     WORK_DIR=$(mktemp -d)
     REPO_DIR="$WORK_DIR/repo"
+    first_repo_branch="$(construct_branch_url "$FIRST_REPO" "$FIRST_REPO_BRANCH")"
+    second_repo_branch="$(construct_branch_url "$SECOND_REPO" "$SECOND_REPO_BRANCH")"
+    rebased_branch="$(construct_branch_url "$FIRST_REPO" "$FIRST_REPO_BRANCH-rebased")"
+
+    SUCCESSFUL_REBASE_PR_TITLE="Automatic rebase of branch '$FIRST_REPO_BRANCH' completed successfully"
+    SUCCESSFUL_REBASE_MESSAGE="Summary:
+* Rebased branch [$FIRST_REPO_BRANCH]($first_repo_branch) from repository $FIRST_REPO.
+* New base: [$SECOND_REPO_BRANCH]($second_repo_branch) from repository $SECOND_REPO.
+
+Please, manage the rebased branch by either merging [$FIRST_REPO_BRANCH-rebased]($rebased_branch) into [$FIRST_REPO_BRANCH]($first_repo_branch), force pushing branch [$FIRST_REPO_BRANCH]($first_repo_branch) to include commits from [$FIRST_REPO_BRANCH-rebased]($rebased_branch), or any other way suitable for this repository.
+
+Delete the branch [$FIRST_REPO_BRANCH-rebased]($rebased_branch) after you are done.
+"
+    unset first_repo_branch
+    unset second_repo_branch
+    unset rebased_branch
 else
     if [[ "${#POSITIONAL_ARGS[@]}" -ne "3" ]]; then
         usage
@@ -503,30 +554,18 @@ else
     SECOND_REPO_BRANCH="$3"
     SECOND_REPO_REF="$SECOND_REPO_BRANCH"
     REPO_DIR="$FIRST_REPO"
-fi
+    SUCCESSFUL_REBASE_MESSAGE="Summary:
+* Rebased branch '$FIRST_REPO_BRANCH'.
+* New base: '$SECOND_REPO_BRANCH'.
 
-SUCCESSFUL_REBASE_PR_TITLE="Automatic rebase of branch $FIRST_REPO_BRANCH completed successfully"
-SUCCESSFUL_REBASE_MESSAGE="
-Summary:
-* Rebased branch $FIRST_REPO_BRANCH from repository $FIRST_REPO."
-
-if [[ -z "$LOCAL" ]]; then
-    SUCCESSFUL_REBASE_MESSAGE+="
-* New base: $SECOND_REPO_BRANCH from repository $SECOND_REPO."
-else
-    SUCCESSFUL_REBASE_MESSAGE+="
-* New base: $SECOND_REPO_BRANCH from repository $FIRST_REPO."
-fi
-
-SUCCESSFUL_REBASE_MESSAGE+="
-
-Please, manage the rebased branch by either merging $FIRST_REPO_BRANCH-rebased
-into $FIRST_REPO_BRANCH, force pushing branch $FIRST_REPO_BRANCH to include
-commits from $FIRST_REPO_BRANCH-rebased, or any other way suitable for this
+Please, manage the rebased branch by either merging '$FIRST_REPO_BRANCH-rebased'
+into '$FIRST_REPO_BRANCH', force pushing branch '$FIRST_REPO_BRANCH' to include
+commits from '$FIRST_REPO_BRANCH-rebased', or any other way suitable for this
 repository.
 
-Delete the branch $FIRST_REPO_BRANCH-rebased after you are done.
+Delete the branch '$FIRST_REPO_BRANCH-rebased' after you are done.
 "
+fi
 
 echo "Working directory: $REPO_DIR"
 
@@ -585,11 +624,13 @@ if [[ "$SKIP" -gt 0 ]]; then
     SKIP_COMMIT="$(git rev-list --reverse "$MERGE_BASE..$FIRST_REPO_BRANCH" 2> "$TMP_LOG_FILE" | sed -n "${SKIP}p")"
 
     if [[ -z "$SKIP_COMMIT" ]]; then
-        echo "ERROR: --skip $SKIP requested but '$FIRST_REPO_BRANCH' has fewer than $SKIP commits after the common ancestor with '$SECOND_REPO_REF'." >&2
+        echo "ERROR: --skip $SKIP requested but '$FIRST_REPO_BRANCH' has fewer than
+$SKIP commits after the common ancestor with '$SECOND_REPO_REF'." >&2
         exit 1
     fi
 
-    echo "Skipping the first $SKIP commit(s) after the common ancestor. Last skipped commit: $SKIP_COMMIT"
+    echo "Skipping the first $SKIP commit(s) after the common ancestor. Last skipped
+commit: $SKIP_COMMIT"
 fi
 
 ################################################################################
@@ -604,7 +645,7 @@ else
 fi
 
 if echo "$BRANCH_TEMP" | grep rebased &> "$TMP_LOG_FILE"; then
-    echo "The last successful rebase of the branch $FIRST_REPO_BRANCH is still
+    echo "The last successful rebase of the branch '$FIRST_REPO_BRANCH' is still
 present in the repository history. Please merge or delete it and restart the
 automatic rebase."
     exit 6
@@ -632,13 +673,15 @@ if [[ "${#BRANCHES[@]}" == "1" && -n "${BRANCHES[0]}" ]]; then
     else
         BRANCH="${BRANCHES[0]##* }"
     fi
-    echo "Continuing rebase of the branch '$FIRST_REPO_BRANCH' from the last commit in branch '$BRANCH'..."
+    echo "Continuing rebase of the branch '$FIRST_REPO_BRANCH' from the last commit in
+branch '$BRANCH'..."
     temp="${BRANCH%-conflict}"
     COMMIT="${temp##*-}"
 elif [[ "${#BRANCHES[@]}" == "1" && -z "${BRANCHES[0]}" ]]; then
     echo "Starting a new rebase..."
 else
-    echo "ERROR: Repository has several conflict branches for the '$FIRST_REPO_BRANCH' and needs cleanup, exiting..." >&2
+    echo "ERROR: Repository has several conflict branches for the '$FIRST_REPO_BRANCH'
+and needs cleanup, exiting..." >&2
     exit 4
 fi
 unset BRANCHES
@@ -648,7 +691,8 @@ unset BRANCHES
 ################################################################################
 if [[ -z "$COMMIT" && -z "$BRANCH" ]]; then
     if ! check_for_rebase "$FIRST_REPO_BRANCH" "$SECOND_REPO_REF"; then
-        echo "Current branch $FIRST_REPO_BRANCH is up to date with $SECOND_REPO_REF."
+        echo "Current branch '$FIRST_REPO_BRANCH' is up to date with
+'$SECOND_REPO_REF'."
         exit 5
     fi
 
@@ -677,6 +721,8 @@ if [[ -z "$COMMIT" && -z "$BRANCH" ]]; then
 
         if [ -n "$empty_commits" ]; then
             SUCCESSFUL_REBASE_MESSAGE+="
+There are empty commits:
+
 $empty_commits
 
 You might want to drop them."
@@ -698,7 +744,8 @@ elif [[ -n "$COMMIT" && -n "$BRANCH" ]]; then
         exit 2
     fi
 
-    echo "Continuing rebase '$FIRST_REPO_BRANCH' onto '$BRANCH' using commit $COMMIT as a base..."
+    echo "Continuing rebase '$FIRST_REPO_BRANCH' onto '$BRANCH' using commit
+$COMMIT as a base..."
 
     # The check_if_resolved() function checks whether the conflict has been
     # resolved by comparing the number of commits on the conflict branch, the
@@ -715,6 +762,8 @@ elif [[ -n "$COMMIT" && -n "$BRANCH" ]]; then
 
         if [ -n "$empty_commits" ]; then
             SUCCESSFUL_REBASE_MESSAGE+="
+There are empty commits:
+
 $empty_commits
 
 You might want to drop them."
@@ -788,30 +837,25 @@ git rebase --abort &> "$TMP_LOG_FILE"
 ################################################################################
 # Opening a PR/communicating via CLI with instructions on how to proceed:
 ################################################################################
-message="Automatic rebase of branch '$FIRST_REPO_BRANCH' met a conflict.
-
-Summary:
-* First repo        : $FIRST_REPO
-* First repo branch : $FIRST_REPO_BRANCH
-"
-if [[ "$LOCAL" != "true" ]]; then
-    message+="
-* Second repo       : $SECOND_REPO
-* Second repo branch : $SECOND_REPO_BRANCH"
-fi
-message+="
-* Branch with the successfully rebased commits : $CONFLICT_BRANCH
-* The commit that introduced the conflict : $CONFLICT_COMMIT
-
-Before relaunching the automatic rebase, please do the following to solve the
-conflict:"
-
 if [[ "$LOCAL" != "true" && -n "$TOKEN" ]]; then
-message+="
+    first_repo_ssh="$(convert_https_to_ssh "$FIRST_REPO" )"
+    first_repo_branch="$(construct_branch_url "$FIRST_REPO" "$FIRST_REPO_BRANCH" )"
+    second_repo_branch="$(construct_branch_url "$SECOND_REPO" "$SECOND_REPO_BRANCH" )"
+    conflict_branch="$(construct_branch_url "$FIRST_REPO" "$CONFLICT_BRANCH" )"
+    message="Summary:
+* First repo: $FIRST_REPO
+* First repo branch: [$FIRST_REPO_BRANCH]($first_repo_branch)
+* Second repo: $SECOND_REPO
+* Second repo branch: [$SECOND_REPO_BRANCH]($second_repo_branch)
+* Branch with the successfully rebased commits: [$CONFLICT_BRANCH]($conflict_branch)
+* The commit that introduced the conflict: \`$CONFLICT_COMMIT\`
+
+Before relaunching the automatic rebase, please do the following to solve the conflict:
+
 1. Fetch the remote repository:
 
     \`\`\`
-    git clone $FIRST_REPO
+    git clone $first_repo_ssh
     \`\`\`
 
 2. Enter the repository.
@@ -827,11 +871,7 @@ message+="
     git cherry-pick $CONFLICT_COMMIT
     \`\`\`
 
-5. Solve the conflict and apply the commit after solving the conflict on top of
-  the conflict branch. Important: if the conflict resolution resulted in an
-  empty commit or you have decided not to resolve the conflict but to drop the
-  commit - you must still add one commit to the $CONFLICT_BRANCH, even if it
-  is an empty commit. Otherwise the automated rebase will not continue.
+5. Solve the conflict and apply the commit after solving the conflict on top of the conflict branch. Important: if the conflict resolution resulted in an empty commit or you have decided not to resolve the conflict but to drop the commit - you must still add one commit to the \`$CONFLICT_BRANCH\` branch, even if it is an empty commit. Otherwise the automated rebase will not continue.
 
     \`\`\`
     git add .
@@ -854,11 +894,34 @@ message+="
 
 If you want to start the automatic rebase from the beginning, then make sure to:
 
-* Remove the $CONFLICT_BRANCH from the remote repository.
+* Remove the \`$CONFLICT_BRANCH\` from the remote repository.
 * Close this PR.
 "
+
+    unset first_repo_ssh
+    unset first_repo_branch
+    unset second_repo_branch
+    unset conflict_branch
+
+    pr_body="$message"
+    pr_title="Automatic rebase of branch '$FIRST_REPO_BRANCH' met a conflict."
+
+    if ! check_for_pr "$TOKEN" "$FIRST_REPO" "$CONFLICT_BRANCH" "$FIRST_REPO_BRANCH" ; then
+        create_pr_remote "$TOKEN" "$FIRST_REPO" "$CONFLICT_BRANCH" "$FIRST_REPO_BRANCH" "$pr_title" "$pr_body"
+    fi
 else
-message+="
+    message="Automatic rebase of branch '$FIRST_REPO_BRANCH' met a conflict.
+
+Summary:
+* Repo                                         : $FIRST_REPO
+* First branch                                 : $FIRST_REPO_BRANCH
+* Second branch                                : $SECOND_REPO_BRANCH
+* Branch with the successfully rebased commits : $CONFLICT_BRANCH
+* The commit that introduced the conflict      : $CONFLICT_COMMIT
+
+Before relaunching the automatic rebase, please do the following to solve the
+conflict:
+
 1. Enter the repository.
 2. Checkout the conflict branch created by the script:
 
@@ -879,17 +942,7 @@ message+="
 
     $(basename "$0") $ALL_ARGS
 "
-fi
 
-
-if [[ "$LOCAL" != "true" && -n "$TOKEN" ]]; then
-    pr_body="$message"
-    pr_title="Automatic rebase of branch '$FIRST_REPO_BRANCH' met a conflict."
-
-    if ! check_for_pr "$TOKEN" "$FIRST_REPO" "$CONFLICT_BRANCH" "$FIRST_REPO_BRANCH" ; then
-        create_pr_remote "$TOKEN" "$FIRST_REPO" "$CONFLICT_BRANCH" "$FIRST_REPO_BRANCH" "$pr_title" "$pr_body"
-    fi
-else
     echo "$message"
 fi
 
