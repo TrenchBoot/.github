@@ -68,20 +68,35 @@ package, hence significantly reduced set of parameters.
 There is also no need to use `qubes-builder-docker/` in this case because
 builder's repository contains its own Docker image.
 
-| Parameter            | Type   | Req. | Def. | Description
-| ---------            | ----   | ---- | ---- | -----------
-| `qubes-component`    | string | Yes  | -    | Name of QubesOS component as recognized by its build system.
-| `qubes-pkg-src-dir`  | string | No   | -    | Relative path to directory containing Qubes OS package.
-| `qubes-pkg-version`  | string | No   | auto | Version for RPM packages
-| `qubes-pkg-revision` | string | No   | `1`  | Revision for RPM packages
-
-Used by [TrenchBoot/qubes-antievilmaid][aem] and
-[TrenchBoot/secure-kernel-loader][skl].  The latter makes use of
-`qubes-pkg-src-dir` as Qubes OS package is stored within the repository itself.
+| Parameter                | Type   | Req. | Def. | Description
+| ---------                | ----   | ---- | ---- | -----------
+| `qubes-component`        | string | Yes  | -    | Name of QubesOS component as recognized by its build system.
+| `qubes-pkg-src-dir`      | string | No   | -    | Relative path to directory containing Qubes OS package.
+| `qubes-pkg-version`      | string | No   | auto | Version for RPM packages
+| `qubes-pkg-revision`     | string | No   | `1`  | Revision for RPM packages
+| `qubes-component-branch` | string | No   | -    | Forced repository branch to build component from
 
 [qubes-builder-v2]: https://github.com/QubesOS/qubes-builderv2
 [aem]: https://github.com/TrenchBoot/qubes-antievilmaid/blob/2b6b796e31789fca599986c9cfb0a3ceced5967d/.github/workflows/build.yml
 [skl]: https://github.com/TrenchBoot/secure-kernel-loader
+
+### rebase
+
+This workflow automates rebasing a downstream repository branch on top of an
+upstream branch. On success, it pushes the rebased branch. If conflicts arise,
+it opens a pull request against the downstream repository to ask for
+resolution.
+
+| Parameter              | Type   | Req. | Def. | Description
+| ---------              | ----   | ---- | ---- | -----------
+| `downstream-repo`      | string | Yes  | -    | URL of the repository to rebase (`<first_repo>` argument of `rebase.sh`).
+| `downstream-branch`    | string | Yes  | -    | Branch in the downstream repository to rebase (`<first_repo_branch>` argument of `rebase.sh`).
+| `upstream-repo`        | string | Yes  | -    | URL of the repository that provides the new base (`<second_repo>` argument of `rebase.sh`).
+| `upstream-branch`      | string | Yes  | -    | Branch in the upstream repository to rebase onto (`<second_repo_branch>` argument of `rebase.sh`).
+| `commit-user-name`     | string | Yes  | -    | Git author name used for rebase commits (`--commit-user-name` option of `rebase.sh`).
+| `commit-user-email`    | string | Yes  | -    | Git author e-mail used for rebase commits (`--commit-user-email` option of `rebase.sh`).
+| `cicd-trigger-resume`  | string | Yes  | -    | Human-readable message appended to the conflict PR describing how to resume the pipeline (`--cicd-trigger-resume` option of `rebase.sh`).
+| `first-remote-token`   | string | Yes  | -    | Personal access token with permissions to fetch, branch, commit, push, and open/close PRs on `downstream-repo`. Passed as a GitHub Actions secret.
 
 ## Usage
 
@@ -91,12 +106,14 @@ modifications to workflows are necessary.
 
 [workflow-docs]: https://docs.github.com/en/actions/using-workflows/reusing-workflows
 
+### qubes-dom0-package or qubes-dom0-packagev2
+
 Create a workflow file like `.github/workflows/build.yml` inside of your
 repository.  It will have 3 parts: name, triggering conditions and invocation
 of one of the workflows defined here.  Let's use [TrenchBoot/grub][grub] as an
 example.
 
-### Name
+#### Name
 
 ```yaml
 name: Test build and package QubesOS RPMs
@@ -104,7 +121,7 @@ name: Test build and package QubesOS RPMs
 
 Specify workflow title used for identification in UI.
 
-### Triggering conditions
+#### Triggering conditions
 
 ```yaml
 on:
@@ -118,7 +135,7 @@ on:
 Activate this workflow on push of any tag or a branch which starts with
 `intel-txt-aem` (including this branch, i.e. `*` can expand to an empty string).
 
-### Workflow invocation
+#### Workflow invocation
 
 ```yaml
 jobs:
@@ -133,6 +150,49 @@ jobs:
 
 Invoke v1 workflow from `master` branch of this repository with the set of
 parameters as described in a section above.
+
+### rebase
+
+`rebase` is typically one job in a larger workflow that first prepares the
+upstream branch to rebase onto, then calls this workflow, and finally cleans up
+any temporary branches.
+
+#### Triggering conditions
+
+There is no specific trigger condition that can be used to trigger pipelines
+that contain this reusable workflow. So the developer is free to decide. But
+there is one case: if the workflow that uses this reusable workflow has a
+condition on push event, then the token provided via `first-remote-token` should
+not have permissions to trigger CI/CDs. This is because the script used inside
+this reusable workflow pushes to the remote repository several times.
+
+#### Workflow invocation
+
+```yaml
+name: Rebase on top of QubesOS main
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 6'
+
+jobs:
+  try-rebase:
+    uses: TrenchBoot/.github/.github/workflows/rebase.yml@master
+    secrets:
+      first-remote-token: ${{secrets.TRENCHBOOT_REBASE_TOKEN}}
+    permissions:
+      # For creation/deletion/pushing to branches and creating PRs
+      contents: write
+    with:
+      downstream-repo: 'https://github.com/DaniilKl/qubes-antievilmaid.git'
+      downstream-branch: 'main'
+      upstream-repo: 'https://github.com/QubesOS/qubes-antievilmaid.git'
+      upstream-branch: 'main'
+      commit-user-name: 'github-actions[bot]'
+      commit-user-email: 'github-actions[bot]@users.noreply.github.com'
+      cicd-trigger-resume: '7. Rerun the workflow https://github.com/DaniilKl/qubes-antievilmaid/actions/runs/${{ github.run_id }} to resume automated rebase.'
+```
 
 ## Funding
 

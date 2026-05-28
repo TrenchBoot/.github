@@ -1,0 +1,120 @@
+---
+name: Try rebasing on updated upstream, report in case of conflicts
+
+on:
+  workflow_call:
+    secrets:
+      first-remote-token:
+        description: >
+          Personal access token for performing the following operations on the
+          downstream-repo: fetch the repository, create a branch, delete a
+          branch, create commits on a branch, push to a branch, open a PR, close
+          a PR, get list of PRs.
+        required: true
+    inputs:
+      downstream-repo:
+        description: >
+          <first_repo> parameter for the rebase.sh script.
+        required: true
+        type: string
+      downstream-branch:
+        description: >
+          <first_repo_branch> parameter for the rebase.sh script.
+        required: true
+        type: string
+      upstream-repo:
+        description: >
+          <second_repo> parameter for the rebase.sh script.
+        required: true
+        type: string
+      upstream-branch:
+        description: >
+          <second_repo_branch> parameter for the rebase.sh script.
+        required: true
+        type: string
+      commit-user-name:
+        description: >
+          NAME parameter for the --commit-user-name option of the rebase.sh
+          script.
+        required: true
+        type: string
+      commit-user-email:
+        description: >
+          EMAIL parameter for the --commit-user-email option of the rebase.sh
+          script.
+        required: true
+        type: string
+      cicd-trigger-resume:
+        description: >
+          MESSAGE parameter for the --cicd-trigger-resume option of the
+          rebase.sh script.
+        required: true
+        type: string
+      skip-commits:
+        description: >
+          N parameter for --skip option of the rebase.sh script.
+        required: false
+        type: string
+        default: '0'
+      additional-params:
+        description: >
+          Additional parameters for the rebase.sh script.
+        required: false
+        type: string
+        default: ''
+    outputs:
+      rebase-exit-code:
+        description: >
+          Exit code returned by the rebase.sh script. See the script's --help
+          output for the meaning of each code.
+        value: ${{ jobs.rebase-attempt.outputs.rebase-exit-code }}
+
+jobs:
+  rebase-attempt:
+    runs-on: ubuntu-latest
+    name: Try rebasing on updated upstream, report in case of conflicts
+    permissions:
+      # For creation/deletion/pushing to branches and creating PRs
+      contents: write
+    outputs:
+      rebase-exit-code: ${{ steps.rebase.outputs.exit-code }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: TrenchBoot/.github
+          path: shared
+          ref: ${{ job.workflow_sha }}
+      - name: Run script for rebasing
+        id: rebase
+        env:
+          FIRST_REMOTE_TOKEN: ${{ secrets.first-remote-token }}
+          DOWNSTREAM_REPO: ${{ inputs.downstream-repo }}
+          DOWNSTREAM_BRANCH: ${{ inputs.downstream-branch }}
+          UPSTREAM_REPO: ${{ inputs.upstream-repo }}
+          UPSTREAM_BRANCH: ${{ inputs.upstream-branch }}
+          NAME: ${{ inputs.commit-user-name }}
+          EMAIL: ${{ inputs.commit-user-email }}
+          MESSAGE: ${{ inputs.cicd-trigger-resume }}
+          SKIP_COMMITS: ${{ inputs.skip-commits }}
+          ADDITIONAL_PARAMS: ${{ inputs.additional-params }}
+        run: |
+          set +e
+          shared/scripts/rebase.sh --first-remote-token "$FIRST_REMOTE_TOKEN" \
+          --commit-user-name "$NAME" \
+          --commit-user-email "$EMAIL" \
+          --cicd-trigger-resume "$MESSAGE" \
+          --skip "$SKIP_COMMITS" \
+          "$DOWNSTREAM_REPO" \
+          "$DOWNSTREAM_BRANCH" \
+          "$UPSTREAM_REPO" \
+          "$UPSTREAM_BRANCH" \
+          "$ADDITIONAL_PARAMS"
+          rc=$?
+          echo "exit-code=${rc}" >> "$GITHUB_OUTPUT"
+          # The "No rebase needed" return code should be considered a success
+          # here, as we do not want to show that a job has failed in that case
+          # to avoid drawing attention of maintainers.
+          if [ "$rc" -eq "5" ]; then
+              exit "0"
+          fi
+          exit "${rc}"

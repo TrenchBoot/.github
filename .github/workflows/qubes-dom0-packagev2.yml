@@ -23,6 +23,11 @@ on:
           Forced version of a package.
         required: false
         type: string
+      qubes-component-branch:
+        description: >
+          Forced repository branch to build component from
+        required: false
+        type: string
 
 jobs:
   build-and-package:
@@ -40,7 +45,7 @@ jobs:
           createrepo-c devscripts python3-docker reprepro \
           python3-pathspec mktorrent python3-lxml python3-dateutil
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: QubesOS/qubes-builderv2
           ref: 80dd898cc0472dd99f161f1d1c7c44da64de93f2
@@ -79,6 +84,7 @@ jobs:
           PKG_DIR: ${{ inputs.qubes-pkg-src-dir }}
           PKG_REV: ${{ inputs.qubes-pkg-revision }}
           PKG_VER: ${{ inputs.qubes-pkg-version }}
+          BUILD_BRANCH: ${{ inputs.qubes-component-branch }}
           # Following 2 variables are used in double expansion '${${{ github.ref_type }}}',
           # do not change these names even though they don't follow the convention.
           branch: ${{ github.head_ref }}
@@ -88,11 +94,14 @@ jobs:
           # Switch from Qubes to Docker executor
           sed -i "/^executor:$/,+4d; /^#executor:$/,+3s/#//" builder.yml
 
-          branch_name=${${{ github.ref_type }}}
+          branch_name="${BUILD_BRANCH}"
           if [ -z "$branch_name" ]; then
-              # github.head_ref is set only for pull requests, this should
-              # handle pushes
-              branch_name=$(basename "$GITHUB_REF")
+              branch_name=${${{ github.ref_type }}}
+              if [ -z "$branch_name" ]; then
+                  # github.head_ref is set only for pull requests, this should
+                  # handle pushes
+                  branch_name=$(basename "$GITHUB_REF")
+              fi
           fi
 
           if [ -n "$PKG_DIR" ]; then
