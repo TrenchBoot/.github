@@ -99,6 +99,13 @@ jobs:
           ADDITIONAL_PARAMS: ${{ inputs.additional-params }}
         run: |
           set +e
+          # Split ADDITIONAL_PARAMS into separate arguments. Quoting an empty
+          # value would forward it as a spurious 5th positional argument and
+          # the script rejects anything other than exactly four.
+          ADDITIONAL_ARGS=()
+          if [ -n "$ADDITIONAL_PARAMS" ]; then
+              read -ra ADDITIONAL_ARGS <<< "$ADDITIONAL_PARAMS"
+          fi
           shared/scripts/rebase.sh --first-remote-token "$FIRST_REMOTE_TOKEN" \
           --commit-user-name "$NAME" \
           --commit-user-email "$EMAIL" \
@@ -108,7 +115,7 @@ jobs:
           "$DOWNSTREAM_BRANCH" \
           "$UPSTREAM_REPO" \
           "$UPSTREAM_BRANCH" \
-          "$ADDITIONAL_PARAMS"
+          "${ADDITIONAL_ARGS[@]}"
           rc=$?
           echo "exit-code=${rc}" >> "$GITHUB_OUTPUT"
           # The "No rebase needed" return code should be considered a success
